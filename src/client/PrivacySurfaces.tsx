@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { PrivacyController } from '../controller.ts'
 import type {
-  AuditRecord, DetectorMode, PrivacyFinding, PrivacySnapshot, RiskLevel, ScanResult,
+  DetectorMode, PrivacyFinding, PrivacySnapshot, RiskLevel, ScanResult, SendRecord,
   EditableRegexRule, EntityType, FindingCategory, RegexErrorCode,
 } from '../types.ts'
 import { DEFAULT_REGEX_RULES } from '../detector.ts'
@@ -81,6 +81,20 @@ const RISK_KEYS: Record<RiskLevel, PrivacyKey> = {
   medium: 'risk.medium',
   high: 'risk.high',
   critical: 'risk.critical',
+}
+
+function ruleDisplayName(
+  ruleId: string | undefined,
+  entityType: PrivacyFinding['entityType'],
+  fallback: string | undefined,
+  t: PrivacyDrawerProps['t'],
+): string {
+  if (ruleId === 'builtin-0') return t('rules.fieldKey')
+  if (ruleId === 'builtin-1') return t('rules.tokenPrefix')
+  if (ruleId === 'builtin-7') return `${t(ENTITY_KEYS[entityType])} · ${t('rules.luhn')}`
+  if (ruleId === 'builtin-8') return `${t(ENTITY_KEYS[entityType])} · ${t('rules.iban')}`
+  if (ruleId?.startsWith('builtin-') === true) return t(ENTITY_KEYS[entityType])
+  return fallback ?? t('audit.deterministic')
 }
 
 function findingSources(result: ScanResult): DetectorMode[] {
@@ -182,10 +196,9 @@ export function FooterButton({ controller, wide, t }: FooterButtonProps): ReactN
   )
 }
 
-export function PrivacyDock({ controller, inputActions, sessionId, t, useInput }: PrivacyDockProps): ReactNode {
+export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockProps): ReactNode {
   const snapshot = usePrivacy(controller)
   const draft = useInput(state => state.draft)
-  const draftRequest = snapshot.draftRequestBySession.get(sessionId)
   const baseline = useMemo(
     () => controller.scan(draft),
     [controller, draft, snapshot.detectorMode, snapshot.enabled, snapshot.regexRevision],
@@ -206,19 +219,6 @@ export function PrivacyDock({ controller, inputActions, sessionId, t, useInput }
   }, [controller, draft, sessionId, snapshot.detectorMode, snapshot.enabled,
     snapshot.detectorStates.embedded.status, snapshot.regexRevision])
 
-  useEffect(() => {
-    if (draftRequest === undefined) return
-    inputActions.setDraft(draftRequest.text)
-    controller.acknowledgeDraft(sessionId, draftRequest.id)
-  }, [controller, draftRequest, inputActions, sessionId])
-
-  useEffect(() => {
-    if (!snapshot.enabled || draft.trim() === ''
-      || (result.findings.length === 0 && result.policySignals.length === 0)) return
-    const timer = window.setTimeout(() => { controller.capture(sessionId, draft, result) }, 750)
-    return () => { window.clearTimeout(timer) }
-  }, [controller, draft, result, sessionId, snapshot.enabled])
-
   if (!snapshot.enabled || (result.findings.length === 0 && result.policySignals.length === 0)) return null
 
   const count = result.findings.length + result.policySignals.length
@@ -238,7 +238,6 @@ export function PrivacyDock({ controller, inputActions, sessionId, t, useInput }
           className={css.secondaryButton}
           type="button"
           onClick={() => {
-            controller.record(sessionId, draft, result, 'detected')
             controller.setOpen(true)
           }}
         >
@@ -281,7 +280,7 @@ function AuditView({
   live: ReturnType<PrivacySnapshot['liveBySession']['get']>
   t: PrivacyDrawerProps['t']
 }): ReactNode {
-  if (live === undefined) {
+  if (live === undefined || live.text.trim() === '') {
     return <div className={css.emptyState}>{t('audit.empty')}</div>
   }
   const payload = JSON.stringify(normalized(live.result), null, 2)
@@ -334,7 +333,7 @@ function AuditView({
                 <div className={css.findingMeta}>
                   <DetectorBadge mode={finding.detector} t={t} />
                   <span>{finding.detector === 'regex'
-                    ? finding.ruleName ?? t('audit.deterministic')
+                    ? ruleDisplayName(finding.ruleId, finding.entityType, finding.ruleName, t)
                     : `${Math.round(finding.confidence * 100)}%`}</span>
                 </div>
               </div>
@@ -360,62 +359,54 @@ function AuditView({
   )
 }
 
-function HistoryView({ controller, onLoad, records, sessionId, t }: {
+function RecentSends({ controller, records, sessionId, t }: {
   controller: PrivacyController
-  onLoad: (text: string) => void
-  records: readonly AuditRecord[]
+  records: readonly SendRecord[]
   sessionId: string
   t: PrivacyDrawerProps['t']
 }): ReactNode {
   const recent = [...records].reverse()
   return (
-    <div className={css.tabPage}>
-      <div className={css.historyTitle}>
-        <h3>{`${t('history.title')} (${String(records.length)})`}</h3>
-        {records.length > 0 ? (
-          <button type="button" onClick={() => { controller.clearAudits(sessionId) }}>{t('history.clear')}</button>
-        ) : null}
+    <section className={css.activitySection}>
+      <div className={css.activityHeading}>
+        <div><h3>{t('activity.title')}</h3><small>{t('activity.sessionOnly')}</small></div>
+        <button type="button" aria-label={t('activity.clear')} title={t('activity.clear')}
+          onClick={() => { controller.clearSendRecords(sessionId) }}><LucideIcon icon={Trash2} /></button>
       </div>
-      {recent.length === 0 ? <div className={css.emptyState}>{t('history.empty')}</div> : (
-        <div className={css.historyRows}>
-          {recent.map(record => (
-            <article className={css.historyRow} key={record.id}>
-              <header>
-                <div>
-                  <strong>{record.action === 'sent' ? t('history.redacted') : t('history.detected')}</strong>
-                  <time>{new Date(record.updatedAt).toLocaleString([], {
-                    day: 'numeric', hour: '2-digit', minute: '2-digit', month: 'short',
-                  })}</time>
-                </div>
-                <span className={css.riskBadge} data-risk={record.result.overallRisk}>
-                  {t(RISK_KEYS[record.result.overallRisk])}
-                </span>
-              </header>
-              <div className={css.historyDetector}>
-                <span>{`${t('history.backend')}: ${detectorSummary(record.result, t)}`}</span>
-                <div>
-                  <small>{t('history.matches')}</small>
-                  {findingSources(record.result).map(mode => (
-                    <DetectorBadge
-                      fallback={record.result.detector.fallback}
-                      key={mode}
-                      mode={mode}
-                      t={t}
-                    />
-                  ))}
-                </div>
-              </div>
-              <code className={css.historyPreview}>{record.result.redactedText}</code>
-              <footer>
-                <span>{`${String(record.result.findings.length)} ${t('history.findings')}`}</span>
-                <button type="button" onClick={() => { onLoad(record.text) }}>
-                  {t('history.load')}
-                </button>
-              </footer>
-            </article>
-          ))}
-        </div>
-      )}
+      <div className={css.activityRows}>
+        {recent.map(record => (
+          <article className={css.activityRow} key={record.id}>
+            <div className={css.activityMain}>
+              <time>{new Date(record.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+              <div><strong>{t('activity.sent')}</strong><small>
+                {`${String(record.redactedCount)} ${t('activity.redacted')}`}
+                {record.keptCount > 0 ? ` · ${String(record.keptCount)} ${t('activity.kept')}` : ''}
+              </small></div>
+              <span className={css.riskBadge} data-risk={record.overallRisk}>{t(RISK_KEYS[record.overallRisk])}</span>
+            </div>
+            <div className={css.activityMeta}>
+              {record.detectors.map(mode => <DetectorBadge mode={mode} key={mode} t={t} />)}
+              {record.fallbackUsed ? <small>{t('source.regexFallback')}</small> : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function DetectionView({ controller, live, records, sessionId, t }: {
+  controller: PrivacyController
+  live: ReturnType<PrivacySnapshot['liveBySession']['get']>
+  records: readonly SendRecord[]
+  sessionId: string | undefined
+  t: PrivacyDrawerProps['t']
+}): ReactNode {
+  return (
+    <div className={css.detectionView}>
+      <AuditView live={live} t={t} />
+      {sessionId !== undefined && records.length > 0
+        ? <RecentSends controller={controller} records={records} sessionId={sessionId} t={t} /> : null}
     </div>
   )
 }
@@ -569,21 +560,22 @@ function RulesView({ controller, snapshot, t }: {
       <div className={css.ruleRows}>{visible.map((rule) => {
         const defaultRule = defaults.get(rule.id)
         const changed = defaultRule !== undefined && JSON.stringify(defaultRule) !== JSON.stringify(rule)
+        const displayName = ruleDisplayName(rule.id, rule.entityType, rule.name, t)
         return <article className={css.ruleCard} key={rule.id} data-enabled={rule.enabled || undefined}>
           <label className={css.ruleToggle}><input type="checkbox" checked={rule.enabled}
             onChange={(event) => { controller.saveRule({ ...rule, enabled: event.target.checked }) }} /><span /></label>
           <button className={css.ruleBody} type="button" onClick={() => { setEditing(rule) }}>
-            <strong>{rule.name}</strong><code>/{rule.pattern}/{rule.flags}</code>
+            <strong>{displayName}</strong><code>/{rule.pattern}/{rule.flags}</code>
             <small>{defaultRule === undefined ? t('rules.custom') : t('rules.builtin')} · {t(ENTITY_KEYS[rule.entityType])}</small>
           </button>
           <div className={css.ruleActions}>
-            <button type="button" title={t('rules.edit')} aria-label={`${t('rules.edit')}: ${rule.name}`} onClick={() => { setEditing(rule) }}><LucideIcon icon={Pencil} /></button>
-            <button type="button" title={t('rules.copy')} aria-label={`${t('rules.copy')}: ${rule.name}`} onClick={() => {
-              setEditing({ ...rule, id: `custom-${randomUUID()}`, name: `${rule.name} ${t('rules.copySuffix')}` })
+            <button type="button" title={t('rules.edit')} aria-label={`${t('rules.edit')}: ${displayName}`} onClick={() => { setEditing(rule) }}><LucideIcon icon={Pencil} /></button>
+            <button type="button" title={t('rules.copy')} aria-label={`${t('rules.copy')}: ${displayName}`} onClick={() => {
+              setEditing({ ...rule, id: `custom-${randomUUID()}`, name: `${displayName} ${t('rules.copySuffix')}` })
             }}><LucideIcon icon={Copy} /></button>
-            {defaultRule === undefined ? <button type="button" title={t('rules.delete')} aria-label={`${t('rules.delete')}: ${rule.name}`}
+            {defaultRule === undefined ? <button type="button" title={t('rules.delete')} aria-label={`${t('rules.delete')}: ${displayName}`}
               onClick={() => { if (window.confirm(t('rules.deleteConfirm'))) controller.deleteRule(rule.id) }}><LucideIcon icon={Trash2} /></button>
-              : changed ? <button type="button" title={t('rules.reset')} aria-label={`${t('rules.reset')}: ${rule.name}`}
+              : changed ? <button type="button" title={t('rules.reset')} aria-label={`${t('rules.reset')}: ${displayName}`}
                 onClick={() => { controller.resetRule(rule.id) }}><LucideIcon icon={RotateCcw} /></button> : null}
           </div>
         </article>
@@ -643,7 +635,8 @@ function SendReviewView({ controller, review, t }: {
             </div>
             <code>{finding.maskedEvidence}</code>
             <small>{finding.ruleName === undefined
-              ? t('review.model') : `${t('review.rule')}: ${finding.ruleName}`}</small>
+              ? t('review.model')
+              : `${t('review.rule')}: ${ruleDisplayName(finding.ruleId, finding.entityType, finding.ruleName, t)}`}</small>
           </div>
           <div className={css.disposition}>
             <button type="button" data-selected={review.redactByFinding[key] !== false || undefined}
@@ -755,10 +748,9 @@ export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps
   const snapshot = usePrivacy(controller)
   const sessionId = useSessions(state => state.current)
   const live = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
-  const records = sessionId === undefined ? [] : snapshot.auditsBySession.get(sessionId) ?? []
+  const records = sessionId === undefined ? [] : snapshot.sendRecordsBySession.get(sessionId) ?? []
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
     ['audit', 'tab.audit'],
-    ['history', 'tab.history'],
     ['rules', 'tab.rules'],
     ['model', 'tab.model'],
   ]
@@ -803,15 +795,9 @@ export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps
           <SendReviewView controller={controller} review={snapshot.pendingSendReview} t={t} />
         ) : null}
         {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'audit' ? (
-          <AuditView
-            live={live}
-            t={t}
-          />
-        ) : null}
-        {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'history' && sessionId !== undefined ? (
-          <HistoryView
+          <DetectionView
             controller={controller}
-            onLoad={(text) => { controller.requestDraft(sessionId, text) }}
+            live={live}
             records={records}
             sessionId={sessionId}
             t={t}

@@ -35,7 +35,9 @@ describe('composer send boundary', () => {
     expect(call[0][1]?.text).toMatch(/^ZCPII-EMAIL-/u)
     expect(controller.vault.restore('s1', call[0][1]!.text!)).toBe('demo@example.com')
     expect(call.slice(1)).toEqual(['steer', signal, 'request-1'])
-    expect(controller.getSnapshot().auditsBySession.get('s1')?.[0]?.action).toBe('sent')
+    expect(controller.getSnapshot().sendRecordsBySession.get('s1')?.[0]).toEqual(expect.objectContaining({
+      redactedCount: 1, keptCount: 0,
+    }))
     expect(controller.getSnapshot().open).toBe(false)
   })
 
@@ -49,7 +51,7 @@ describe('composer send boundary', () => {
     await expect(composer.sendSession({ sessionId: 's1', prompt } as Parameters<Composer['sendSession']>[0], 'demo@example.com', [], 'queue')).rejects.toThrow('quota')
     expect(prompt).not.toHaveBeenCalled()
     expect(composer.echo).toBe('demo@example.com')
-    expect(controller.getSnapshot().auditsBySession.size).toBe(0)
+    expect(controller.getSnapshot().sendRecordsBySession.size).toBe(0)
   })
 
   it('pauses a critical send for one review and applies per-finding choices', async () => {
@@ -73,8 +75,9 @@ describe('composer send boundary', () => {
     expect(outgoing).toContain(secret)
     expect(outgoing).not.toContain('demo@example.com')
     expect(controller.getSnapshot().pendingSendReview).toBeUndefined()
-    const audit = controller.getSnapshot().auditsBySession.get('s1')?.[0]
-    expect(audit?.result.findings.find(finding => finding.entityType === 'API_KEY')?.action).toBe('kept')
+    expect(controller.getSnapshot().sendRecordsBySession.get('s1')?.[0]).toEqual(expect.objectContaining({
+      redactedCount: 1, keptCount: 1, findingCount: 2,
+    }))
   })
 
   it('cancels a critical review without sending or writing mappings', async () => {
@@ -92,7 +95,7 @@ describe('composer send boundary', () => {
     await expect(sending).resolves.toEqual({ ok: false })
     expect(prompt).not.toHaveBeenCalled()
     expect(write).not.toHaveBeenCalled()
-    expect(controller.getSnapshot().auditsBySession.size).toBe(0)
+    expect(controller.getSnapshot().sendRecordsBySession.size).toBe(0)
   })
 
   it('supports automatic critical redaction when the user selects that policy', async () => {
@@ -132,6 +135,8 @@ describe('composer send boundary', () => {
     const parts = prompt.mock.calls[0]?.[0] as Array<{ text: string }>
     expect(parts[0]?.text).toMatch(/^api_key=ZCPII-API_KEY-/u)
     expect(parts[1]?.text).toMatch(/^password=ZCPII-PASSWORD-/u)
+    expect(controller.getSnapshot().sendRecordsBySession.get('s1')).toHaveLength(1)
+    expect(controller.getSnapshot().sendRecordsBySession.get('s1')?.[0]?.redactedCount).toBe(2)
   })
 
   it('honors cancellation before sending and does not record a rejected admission as sent', async () => {
@@ -141,7 +146,7 @@ describe('composer send boundary', () => {
     installSendRedaction(composer, controller)
     const session = { sessionId: 's1', prompt: vi.fn(async () => ({ ok: false })) }
     await composer.sendSession(session, 'demo@example.com', [], 'queue')
-    expect(controller.getSnapshot().auditsBySession.size).toBe(0)
+    expect(controller.getSnapshot().sendRecordsBySession.size).toBe(0)
     session.prompt.mockClear()
     await expect(composer.sendSession(session, 'demo@example.com', [], 'queue', AbortSignal.abort())).rejects.toThrow()
     expect(session.prompt).not.toHaveBeenCalled()

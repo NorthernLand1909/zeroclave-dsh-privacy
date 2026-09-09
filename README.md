@@ -12,13 +12,15 @@ An experimental, local-first privacy plugin for the DeepSeek Harness Web UI.
 - Keeps the composer and local submission echo in their original form.
 - Restores known placeholders in user messages, assistant replies, and their copy actions before rendering.
 - Saves restoration mappings in browser IndexedDB before sending, so the same browser can restore messages after reload.
-- Shows the detector source on every finding and keeps a bounded, in-memory audit history per DSH session.
-- Shows findings and a redacted preview in a DSH audit drawer.
+- Shows the detector source on every finding and keeps the latest ten summary-only send records per DSH session.
+- Shows the current findings, redacted preview, and session send activity in one DSH detection view.
 - Leaves a disabled `ZeroClaveDetector` Provider as the future remote integration point.
 
 With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan or mapping write prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
 
-The default send policy pauses a message containing critical findings before Host admission. The review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Detection method**.
+The default send policy pauses a message containing critical findings before Host admission. The review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Detection settings**.
+
+Session activity contains only time, counts, highest risk, detector modes, and fallback status. It stores no draft, finding, evidence, replacement, or redacted text, and disappears when the page reloads.
 
 ## Detection backends
 
@@ -84,7 +86,7 @@ For distribution, build first and create a tarball with `pnpm --filter @zeroclav
 - This alpha adapts the public `conversation.sendSession` method and Chat `StoredEntry.component` renderers because the supported Harness versions have no dedicated redaction middleware. Both adapters unwind when the plugin unloads and require compatibility checks on Harness upgrades. They never rewrite durable messages or model history.
 - Browser history/search exports and non-Chat views retain the Host's redacted representation.
 
-The regression suite covers original composer echoes, redacted admissions, failures, cancellation, full overlap coverage, stable mapping reuse, reload restoration, copy actions, and adapter teardown. The optional released-bundle test exercises the locally cached Harness `0.1.1-rc.2` service. `tests/browser-smoke.mjs` exercises the built plugin with real browser IndexedDB and synthetic messages; it does not call a model API.
+The regression suite covers original composer echoes, redacted admissions, summary-only session activity, failures, cancellation, full overlap coverage, stable mapping reuse, reload restoration, copy actions, and adapter teardown. The optional released-bundle test exercises the locally cached Harness `0.1.1-rc.2` service. `tests/browser-smoke.mjs` exercises the built plugin with real browser IndexedDB and synthetic messages; it does not call a model API.
 
 ## License
 

@@ -54,8 +54,9 @@ export function installSendRedaction(conversation: object, controller: PrivacyCo
           })
           signal?.throwIfAborted()
           const outcome = await target.prompt(outgoing, ...promptArgs)
-          if (outcome.ok) for (const { text, result } of scanned) {
-            if (result.findings.length > 0) controller.record(target.sessionId, text, result, 'sent')
+          const resultsSent = scanned.map(item => item.result)
+          if (outcome.ok && resultsSent.some(result => result.findings.length > 0 || result.policySignals.length > 0)) {
+            controller.recordSend(target.sessionId, resultsSent)
           }
           return outcome
         }

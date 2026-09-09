@@ -5,7 +5,7 @@ export const NS = 'zeroclave.privacy'
 export type PrivacyKey =
   | RuleKey
   | 'brand' | 'active' | 'paused' | 'enable' | 'disable' | 'headerAction' | 'footerEnabled' | 'close' | 'sessionFallback'
-  | 'tab.audit' | 'tab.history' | 'tab.rules' | 'tab.model'
+  | 'tab.audit' | 'tab.rules' | 'tab.model'
   | 'dock.title' | 'dock.items' | 'dock.open' | 'dock.reminder' | 'dock.reviewReminder'
   | 'risk.none' | 'risk.medium' | 'risk.high' | 'risk.critical'
   | 'action.allow' | 'action.redact' | 'action.block'
@@ -14,8 +14,8 @@ export type PrivacyKey =
   | 'audit.findings' | 'audit.empty' | 'audit.noFindings' | 'audit.json' | 'audit.copyJson'
   | 'audit.policy' | 'audit.fallback'
   | 'source.regex' | 'source.embedded' | 'source.zeroclave' | 'source.regexFallback' | 'source.combined'
-  | 'history.title' | 'history.empty' | 'history.clear' | 'history.detected'
-  | 'history.redacted' | 'history.backend' | 'history.matches' | 'history.findings' | 'history.load'
+  | 'activity.title' | 'activity.sessionOnly' | 'activity.clear' | 'activity.sent'
+  | 'activity.redacted' | 'activity.kept'
   | 'entity.AGE' | 'entity.EMAIL' | 'entity.PHONE' | 'entity.PERSON' | 'entity.ADDRESS'
   | 'entity.COORDINATE' | 'entity.HONORIFIC'
   | 'entity.ORGANIZATION' | 'entity.NATIONAL_ID' | 'entity.CREDIT_CODE'
@@ -54,10 +54,9 @@ export const zh: Record<PrivacyKey, string> = {
   footerEnabled: '已启用',
   close: '关闭隐私检测面板',
   sessionFallback: 'DSH 会话',
-  'tab.audit': '检测结果',
+  'tab.audit': '检测',
   'tab.rules': '正则规则',
-  'tab.model': '检测方式',
-  'tab.history': '检测历史',
+  'tab.model': '检测设置',
   'dock.title': '发现敏感内容',
   'dock.items': '项风险',
   'dock.open': '查看详情',
@@ -88,15 +87,12 @@ export const zh: Record<PrivacyKey, string> = {
   'source.zeroclave': 'ZeroClave',
   'source.regexFallback': '正则回退',
   'source.combined': 'BERT + 正则',
-  'history.title': '检测历史',
-  'history.empty': '本次浏览器会话暂无检测记录',
-  'history.clear': '清空历史',
-  'history.detected': '检出敏感内容',
-  'history.redacted': '已脱敏发送',
-  'history.backend': '检测后端',
-  'history.matches': '命中来源',
-  'history.findings': '项敏感实体',
-  'history.load': '重新编辑原文',
+  'activity.title': '本次会话',
+  'activity.sessionOnly': '仅保留最近 10 次处理，刷新后清空',
+  'activity.clear': '清空本次会话记录',
+  'activity.sent': '已处理并发送',
+  'activity.redacted': '项脱敏',
+  'activity.kept': '项保留',
   'entity.AGE': '年龄',
   'entity.EMAIL': '邮箱',
   'entity.PHONE': '手机号',
@@ -144,8 +140,8 @@ export const zh: Record<PrivacyKey, string> = {
   'rules.address': '通讯地址与签署地点字段',
   'rules.bank': '开户银行、银行账号与金额字段',
   'rules.kyc': 'KYC / 客户资料上下文',
-  'model.title': '检测方式',
-  'model.desc': '选择当前草稿使用的检测方式',
+  'model.title': '检测设置',
+  'model.desc': '配置发送策略和当前草稿使用的检测方式',
   'model.regex': '本地正则',
   'model.regexDesc': '零下载，适合中文和结构化字段',
   'model.embedded': '内嵌 BERT',
@@ -183,7 +179,7 @@ export const zh: Record<PrivacyKey, string> = {
   'review.keptWarning': '保留项会以原文发送给模型',
   'audit.deterministic': '确定性规则',
   'footer.core': 'ZeroClave Core v0.2',
-  'footer.configure': '检测方式',
+  'footer.configure': '检测设置',
 }
 
 export const en: Record<PrivacyKey, string> = {
@@ -197,10 +193,9 @@ export const en: Record<PrivacyKey, string> = {
   footerEnabled: 'Enabled',
   close: 'Close privacy detection panel',
   sessionFallback: 'DSH session',
-  'tab.audit': 'Results',
+  'tab.audit': 'Detection',
   'tab.rules': 'Rules',
-  'tab.model': 'Method',
-  'tab.history': 'History',
+  'tab.model': 'Settings',
   'dock.title': 'Sensitive content found',
   'dock.items': 'risk items',
   'dock.open': 'View details',
@@ -231,15 +226,12 @@ export const en: Record<PrivacyKey, string> = {
   'source.zeroclave': 'ZeroClave',
   'source.regexFallback': 'Regex fallback',
   'source.combined': 'BERT + regex',
-  'history.title': 'Detection history',
-  'history.empty': 'No detection has been recorded in this browser session',
-  'history.clear': 'Clear history',
-  'history.detected': 'Sensitive content detected',
-  'history.redacted': 'Sent with redaction',
-  'history.backend': 'Detection backend',
-  'history.matches': 'Matched by',
-  'history.findings': 'sensitive findings',
-  'history.load': 'Edit original',
+  'activity.title': 'This session',
+  'activity.sessionOnly': 'Latest 10 processed sends; cleared on refresh',
+  'activity.clear': 'Clear session activity',
+  'activity.sent': 'Processed and sent',
+  'activity.redacted': 'redacted',
+  'activity.kept': 'kept',
   'entity.AGE': 'Age',
   'entity.EMAIL': 'Email',
   'entity.PHONE': 'Phone',
@@ -287,8 +279,8 @@ export const en: Record<PrivacyKey, string> = {
   'rules.address': 'Address and signing-location fields',
   'rules.bank': 'Bank, account, and amount fields',
   'rules.kyc': 'KYC / customer-data context',
-  'model.title': 'Detection method',
-  'model.desc': 'Choose how the current draft is checked',
+  'model.title': 'Detection settings',
+  'model.desc': 'Configure the send policy and how the current draft is checked',
   'model.regex': 'Local regex',
   'model.regexDesc': 'No download; tuned for Chinese structured fields',
   'model.embedded': 'Embedded BERT',
@@ -326,5 +318,5 @@ export const en: Record<PrivacyKey, string> = {
   'review.keptWarning': 'Kept items will be sent to the model as plaintext',
   'audit.deterministic': 'Deterministic rule',
   'footer.core': 'ZeroClave Core v0.2',
-  'footer.configure': 'Detection method',
+  'footer.configure': 'Detection settings',
 }

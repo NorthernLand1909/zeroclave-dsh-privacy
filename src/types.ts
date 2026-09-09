@@ -121,21 +121,26 @@ export interface PrivacyLiveState {
   updatedAt: number
 }
 
-export interface AuditRecord extends PrivacyLiveState {
+export interface SendRecord {
   id: string
-  sessionId: string
-  action: 'detected' | 'sent'
+  updatedAt: number
+  overallRisk: RiskLevel
+  findingCount: number
+  redactedCount: number
+  keptCount: number
+  policySignalCount: number
+  detectors: readonly DetectorMode[]
+  fallbackUsed: boolean
 }
 
 export interface PrivacySnapshot {
   enabled: boolean
   open: boolean
-  activeTab: 'audit' | 'history' | 'rules' | 'model'
+  activeTab: 'audit' | 'rules' | 'model'
   detectorMode: DetectorMode
   detectorStates: Readonly<Record<DetectorMode, DetectorRuntimeState>>
   liveBySession: ReadonlyMap<string, PrivacyLiveState>
-  auditsBySession: ReadonlyMap<string, readonly AuditRecord[]>
-  draftRequestBySession: ReadonlyMap<string, { id: string; text: string }>
+  sendRecordsBySession: ReadonlyMap<string, readonly SendRecord[]>
   regexRules: readonly EditableRegexRule[]
   regexRevision: number
   regexError?: RegexErrorCode | undefined

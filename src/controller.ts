@@ -7,8 +7,7 @@ import {
 } from './regex-rules.ts'
 import type { RegexExecutor } from './regex-rules.ts'
 import type {
-  AuditRecord, DetectorMode, DetectorRuntimeState, PrivacyLiveState,
-  PrivacySnapshot, ScanResult, EditableRegexRule, SendPolicy,
+  DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
 } from './types.ts'
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
@@ -69,8 +68,7 @@ export class PrivacyController {
       zeroclave: { status: 'unconfigured' },
     },
     liveBySession: new Map(),
-    auditsBySession: new Map(),
-    draftRequestBySession: new Map(),
+    sendRecordsBySession: new Map(),
     regexRules: this.storedRules.rules,
     regexRevision: 0,
     regexError: this.storedRules.error,
@@ -320,29 +318,11 @@ export class PrivacyController {
     pending.resolve(decisions)
   }
 
-  requestDraft(sessionId: string, text: string): void {
-    const draftRequestBySession = new Map(this.snapshot.draftRequestBySession)
-    draftRequestBySession.set(sessionId, { id: randomUUID(), text })
-    this.update({ ...this.snapshot, draftRequestBySession })
-  }
-
-  acknowledgeDraft(sessionId: string, id: string): void {
-    if (this.snapshot.draftRequestBySession.get(sessionId)?.id !== id) return
-    const draftRequestBySession = new Map(this.snapshot.draftRequestBySession)
-    draftRequestBySession.delete(sessionId)
-    this.update({ ...this.snapshot, draftRequestBySession })
-  }
-
-  capture(sessionId: string, text: string, result: ScanResult): void {
-    if (!this.snapshot.enabled || (result.findings.length === 0 && result.policySignals.length === 0)) return
-    this.commitAudit(sessionId, text, result, 'detected', false)
-  }
-
-  clearAudits(sessionId: string): void {
-    if (!this.snapshot.auditsBySession.has(sessionId)) return
-    const auditsBySession = new Map(this.snapshot.auditsBySession)
-    auditsBySession.delete(sessionId)
-    this.update({ ...this.snapshot, auditsBySession })
+  clearSendRecords(sessionId: string): void {
+    if (!this.snapshot.sendRecordsBySession.has(sessionId)) return
+    const sendRecordsBySession = new Map(this.snapshot.sendRecordsBySession)
+    sendRecordsBySession.delete(sessionId)
+    this.update({ ...this.snapshot, sendRecordsBySession })
   }
 
   async dispose(): Promise<void> {
@@ -367,40 +347,28 @@ export class PrivacyController {
     this.update({ ...this.snapshot, liveBySession })
   }
 
-  record(sessionId: string, text: string, result: ScanResult, action: AuditRecord['action']): void {
-    this.commitAudit(sessionId, text, result, action, action !== 'sent')
-  }
-
-  private commitAudit(
-    sessionId: string,
-    text: string,
-    result: ScanResult,
-    action: AuditRecord['action'],
-    reveal: boolean,
-  ): void {
-    const live: PrivacyLiveState = { text, result, updatedAt: Date.now() }
-    const liveBySession = new Map(this.snapshot.liveBySession)
-    liveBySession.set(sessionId, live)
-    const auditsBySession = new Map(this.snapshot.auditsBySession)
-    const history = auditsBySession.get(sessionId) ?? []
-    const previous = history.at(-1)
-    const record: AuditRecord = {
-      ...live,
-      id: previous?.text === text && previous.action === action ? previous.id : randomUUID(),
-      sessionId,
-      action,
-    }
-    const records = previous?.text === text && previous.action === action
-      ? [...history.slice(0, -1), record]
-      : [...history.slice(-49), record]
-    auditsBySession.set(sessionId, records)
-    this.update({
-      ...this.snapshot,
-      liveBySession,
-      auditsBySession,
-      open: reveal ? true : this.snapshot.open,
-      activeTab: reveal ? 'audit' : this.snapshot.activeTab,
-    })
+  recordSend(sessionId: string, results: readonly ScanResult[]): void {
+    const findings = results.flatMap(result => result.findings)
+    const detectors = [...new Set(findings.map(finding => finding.detector))]
+    if (detectors.length === 0) detectors.push(...new Set(results.map(result => result.detector.used)))
+    const riskRank: Record<RiskLevel, number> = { none: 0, medium: 1, high: 2, critical: 3 }
+    const overallRisk = results.reduce<RiskLevel>((highest, result) => (
+      riskRank[result.overallRisk] > riskRank[highest] ? result.overallRisk : highest
+    ), 'none')
+    const sendRecordsBySession = new Map(this.snapshot.sendRecordsBySession)
+    const records = sendRecordsBySession.get(sessionId) ?? []
+    sendRecordsBySession.set(sessionId, [...records.slice(-9), {
+      id: randomUUID(),
+      updatedAt: Date.now(),
+      overallRisk,
+      findingCount: findings.length,
+      redactedCount: findings.filter(finding => finding.action !== 'kept').length,
+      keptCount: findings.filter(finding => finding.action === 'kept').length,
+      policySignalCount: results.reduce((count, result) => count + result.policySignals.length, 0),
+      detectors,
+      fallbackUsed: results.some(result => result.detector.fallback),
+    }])
+    this.update({ ...this.snapshot, sendRecordsBySession })
   }
 
   private setDetectorState(mode: DetectorMode, state: DetectorRuntimeState): void {
