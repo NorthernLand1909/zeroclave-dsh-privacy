@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Send Regression</title>
+<style>
+  :root { --dsw-alias-bg-base:#fff; --dsw-alias-bg-layer-1:#f7faf8; --dsw-alias-bg-layer-2:#f1f5f3; --dsw-alias-border-l2:#dce5e0; --dsw-alias-border-l3:#bdcbc4; --dsw-alias-label-primary:#17201c; --dsw-alias-label-secondary:#52615a; --dsw-alias-label-tertiary:#7c8b84; --dsw-alias-interactive-bg-hover:#edf4f0; --ds-font-family-code:ui-monospace,monospace; }
+  * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; color:#17201c; }
+  main { max-width:850px; margin:auto; padding:24px; } header { display:flex; justify-content:space-between; gap:12px; }
+  h1 { font-size:20px; } textarea { width:100%; height:220px; padding:12px; font:inherit; resize:vertical; }
+  article { border-bottom:1px solid #dce5e0; padding:16px 0; } pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+  button { padding:7px 12px; cursor:pointer; } #composer { margin-top:20px; } [data-testid=error] { color:#ac2430; }
+  @media(max-width:500px) { main { padding:12px; } }
+</style>
+<script src="/react.js"></script>
+<script src="/react-dom.js"></script>
+<script>window.__ModuleLoader__ = { load(value) { window.__PLUGIN__ = value; } };</script>
+<script src="/client.js"></script>
+<div id="root"></div>
+<script type="module">
+  const jsxSource = await (await fetch('/jsx.js')).text();
+  const jsx = {};
+  new Function('exports', 'require', 'process', jsxSource)(jsx, () => React, { env: { NODE_ENV:'production' } });
+  const plugin = window.__PLUGIN__.factory(name => {
+    if(name === 'react') return React;
+    if(name === 'react/jsx-runtime') return jsx;
+    throw new Error(`Unexpected dependency ${name}`);
+  });
+  const h = React.createElement;
+  function Message({ node }) {
+    const text = node.data.content?.filter(part => part.type === 'text').map(part => part.text).join('\n')
+      ?? node.data.blocks?.filter(block => block.kind === 'text').map(block => block.text).join('\n') ?? '';
+    return h('article', { 'data-testid':'message' }, h('pre', null, text),
+      h('button', { onClick:() => navigator.clipboard.writeText(text) }, '复制'));
+  }
+  const messageEntries = new Map(['user','assistant-step'].map(key => [key, { options:{key}, component:Message }]));
+  const registrations = [];
+  let dictionaries;
+  const conversation = {
+    async sendSession(session, text, attachments, mode, signal) {
+      return session.prompt([...attachments, { type:'text', text }], mode, signal);
+    },
+  };
+  plugin.apply({
+    conversation, on:() => () => {}, effect:setup => setup(),
+    locale:{ register(_ns, values) { dictionaries = values; return () => {}; } },
+    slots:{
+      entries:() => [...messageEntries.values()], inject:(_name, setup) => setup(),
+      register(options, component) { registrations.push({options,component}); return () => {}; },
+    },
+  });
+  const controller = registrations[0].options.inject().controller;
+  controller.setEnabled(true);
+  const t = key => dictionaries.zh[key] ?? key;
+  const bySlot = name => registrations.find(entry => entry.options.name === name).component;
+  const Header = bySlot('conversation.session.header.actions');
+  const Dock = bySlot('conversation.input.dock');
+  const Drawer = bySlot('shell.overlay');
+  const saved = JSON.parse(sessionStorage.getItem('smoke.messages') ?? '[]');
+  function App() {
+    const [draft, setDraft] = React.useState('');
+    const [messages, setMessages] = React.useState(saved);
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState('');
+    const sessionId = 'smoke-session';
+    const send = async () => {
+      setBusy(true);
+      setError('');
+      try {
+        const session = { sessionId, async prompt(parts) {
+          const text = parts.filter(part => part.type === 'text').map(part => part.text).join('\n');
+          window.__OUTGOING__ = text;
+          const next = [...messages, { key:'user', text }, { key:'assistant-step', text:`核对结果：\n${text}` }];
+          sessionStorage.setItem('smoke.messages', JSON.stringify(next));
+          setMessages(next);
+          return {ok:true};
+        } };
+        await conversation.sendSession(session, draft, [], 'queue');
+        setDraft('');
+      } catch(error) { setError(String(error)); }
+      finally { setBusy(false); }
+    };
+    return h(React.Fragment, null,
+      h('main', null,
+        h('header', null, h('h1', null, '采购框架协议'), h(Header, {controller,t})),
+        messages.map((message,index) => h(messageEntries.get(message.key).component, {
+          key:index,
+          sessionId,
+          node:{data:message.key === 'user'
+            ? {content:[{type:'text',text:message.text}]}
+            : {blocks:[{kind:'text',text:message.text}]}}
+        })),
+        h('section', {id:'composer'},
+          h('textarea', {'aria-label':'消息', value:draft, onChange:event => setDraft(event.target.value)}),
+          h(Dock, {controller,t,sessionId,inputActions:{setDraft},useInput:select => select({draft})}),
+          h('button', {onClick:send,disabled:busy}, '发送'),
+          h('p', {'data-testid':'error'}, error))),
+      h(Drawer, {controller,t,useSessions:select => select({current:sessionId})}));
+  }
+  ReactDOM.createRoot(document.querySelector('#root')).render(h(App));
+</script>
+</html>

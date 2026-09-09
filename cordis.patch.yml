@@ -1,0 +1,3 @@
+- insert:
+    - id: zeroclave-privacy
+      name: '@zeroclave/dsh-privacy'
