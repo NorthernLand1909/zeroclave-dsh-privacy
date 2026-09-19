@@ -28,7 +28,7 @@ export const Config: z<Config> = z.object({
   gatewayBaseURL: z.string().default('https://zeroclave.com/v1'),
   timeoutMs: z.number().min(100).max(30_000).default(15_000),
   telemetryEnabled: z.boolean().default(false),
-  telemetryEndpoint: z.string().default('https://telemetry.zeroclave.com'),
+  telemetryEndpoint: z.string().default('https://telemetry.zeroclave.ai'),
   telemetryKeyId: z.string().default('dsh-prod-1'),
   telemetrySecretEnv: z.string().default('ZEROCLAVE_TELEMETRY_HMAC_SECRET'),
   telemetryTimeoutMs: z.number().min(100).max(10_000).default(2_000),

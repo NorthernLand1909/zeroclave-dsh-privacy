@@ -68,7 +68,7 @@ Cordis value or browser asset. Configure an official Host explicitly:
 
 ```yaml
 telemetryEnabled: true
-telemetryEndpoint: https://telemetry.example.com
+telemetryEndpoint: https://telemetry.zeroclave.ai
 telemetryKeyId: dsh-prod-1
 telemetrySecretEnv: ZEROCLAVE_TELEMETRY_HMAC_SECRET
 telemetryTimeoutMs: 2000

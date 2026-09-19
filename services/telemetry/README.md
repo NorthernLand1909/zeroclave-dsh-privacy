@@ -165,7 +165,7 @@ RS256 signature, issuer, audience, expiry, and not-before time.
 
 Keep `workers_dev` and preview URLs disabled so an alternate public hostname
 cannot bypass the Access application. Protect only
-`telemetry.example.com/admin*`; `/v1/events` remains non-interactive and is
+`telemetry.zeroclave.ai/admin*`; `/v1/events` remains non-interactive and is
 authenticated by HMAC. The admin API returns aggregates only.
 
 ## Local development
@@ -212,7 +212,7 @@ should complete these steps:
 6. Add a custom-domain route before deploy, for example:
 
    ```json
-   "routes": [{ "pattern": "telemetry.example.com", "custom_domain": true }]
+   "routes": [{ "pattern": "telemetry.zeroclave.ai", "custom_domain": true }]
    ```
 
 7. Deploy with `npx wrangler deploy`, verify `/healthz`, verify an invalid
