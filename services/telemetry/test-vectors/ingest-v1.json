@@ -1,0 +1,10 @@
+{
+  "key_id": "test-key-v1",
+  "secret": "test-secret-0123456789abcdef0123456789",
+  "timestamp": "1789696800",
+  "nonce": "abcdefghijklmnopqrstuv",
+  "body": "{\"schema_version\":1,\"product\":\"zeroclave-dsh-privacy\",\"event\":\"detector_used\",\"daily_id\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"plugin_version\":\"0.1.0-alpha.11\",\"value\":\"zeroclave\"}",
+  "body_hash": "ef652e26176ee6217b0b56d260f995a3916dc4375b0f5d7d6b9b19cc22530c28",
+  "canonical": "v1\nPOST\n/v1/events\n1789696800\nabcdefghijklmnopqrstuv\nef652e26176ee6217b0b56d260f995a3916dc4375b0f5d7d6b9b19cc22530c28",
+  "signature": "214ea3a73285e6824e599a6114c083553265c5765fdd4ae89c9cc75e7a88dc37"
+}
