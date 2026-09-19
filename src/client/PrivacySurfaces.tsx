@@ -110,6 +110,11 @@ function detectorSummary(result: ScanResult, t: PrivacyDrawerProps['t']): string
   return t(DETECTOR_KEYS[result.detector.used])
 }
 
+function findingTypeLabel(finding: PrivacyFinding, t: PrivacyDrawerProps['t']): string {
+  if (finding.entityType === 'OTHER' && finding.sourceType !== undefined) return finding.sourceType
+  return t(ENTITY_KEYS[finding.entityType])
+}
+
 function DetectorBadge({ mode, fallback = false, t }: {
   mode: DetectorMode
   fallback?: boolean
@@ -208,7 +213,9 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
 
   useEffect(() => {
     const abort = new AbortController()
-    const delay = snapshot.detectorMode === 'embedded' ? 300 : 0
+    const delay = snapshot.detectorMode === 'zeroclave'
+      ? 650
+      : snapshot.detectorMode === 'embedded' ? 300 : 0
     const timer = window.setTimeout(() => {
       void controller.inspect(sessionId, draft, abort.signal)
     }, delay)
@@ -219,18 +226,33 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
   }, [controller, draft, sessionId, snapshot.detectorMode, snapshot.enabled,
     snapshot.detectorStates.embedded.status, snapshot.regexRevision])
 
-  if (!snapshot.enabled || (result.findings.length === 0 && result.policySignals.length === 0)) return null
+  const incomplete = result.detector.status === 'partial'
+  const zeroClaveState = snapshot.detectorStates.zeroclave
+  const remotePhase = snapshot.detectorMode === 'zeroclave'
+    && (zeroClaveState.status === 'loading' || zeroClaveState.status === 'error')
+    ? zeroClaveState.status : undefined
+  if (!snapshot.enabled || (
+    result.findings.length === 0 && result.policySignals.length === 0 && !incomplete && remotePhase === undefined
+  )) return null
 
   const count = result.findings.length + result.policySignals.length
+  const title = remotePhase === 'loading' ? t('dock.checking')
+    : remotePhase === 'error' ? t('dock.error')
+      : t(incomplete ? 'dock.partial' : 'dock.title')
+  const detail = remotePhase === 'loading' ? t('dock.checkingReminder')
+    : remotePhase === 'error' ? t('dock.errorReminder')
+      : incomplete ? t('dock.partialReminder')
+        : `${String(count)} ${t('dock.items')} · ${t(
+          snapshot.sendPolicy === 'review-critical' ? 'dock.reviewReminder' : 'dock.reminder',
+        )}`
   return (
-    <div className={css.dock} data-risk={result.overallRisk}>
+    <div className={css.dock} data-risk={result.overallRisk}
+      data-status={remotePhase ?? (incomplete ? 'partial' : undefined)}>
       <div className={css.dockSummary}>
         <ShieldIcon size={16} />
         <div>
-          <strong>{t('dock.title')}</strong>
-          <small>{`${String(count)} ${t('dock.items')} · ${t(
-            snapshot.sendPolicy === 'review-critical' ? 'dock.reviewReminder' : 'dock.reminder',
-          )}`}</small>
+          <strong>{title}</strong>
+          <small>{detail}</small>
         </div>
       </div>
       <div className={css.dockActions}>
@@ -238,6 +260,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
           className={css.secondaryButton}
           type="button"
           onClick={() => {
+            if (remotePhase !== undefined) controller.setTab('model')
             controller.setOpen(true)
           }}
         >
@@ -259,8 +282,9 @@ function normalized(result: ScanResult): object {
       end: finding.end,
       masked_evidence: finding.maskedEvidence,
       replacement: finding.replacement,
-      confidence: finding.confidence,
       detector: finding.detector,
+      ...(finding.confidence === undefined ? {} : { confidence: finding.confidence }),
+      ...(finding.sourceType === undefined ? {} : { source_type: finding.sourceType }),
       ...(finding.ruleId === undefined ? {} : { rule_id: finding.ruleId }),
       ...(finding.ruleName === undefined ? {} : { rule_name: finding.ruleName }),
       ...(finding.action === undefined ? {} : { action: finding.action }),
@@ -284,6 +308,7 @@ function AuditView({
     return <div className={css.emptyState}>{t('audit.empty')}</div>
   }
   const payload = JSON.stringify(normalized(live.result), null, 2)
+  const incomplete = live.result.detector.status === 'partial'
   return (
     <div className={css.auditView}>
       <div className={css.inputMeta}>
@@ -313,6 +338,7 @@ function AuditView({
         </div>
       </section>
 
+      {incomplete ? <p className={css.partialWarning}>{t('audit.partial')}</p> : null}
       {live.result.detector.fallback ? <p className={css.fallback}>{t('audit.fallback')}</p> : null}
 
       <section className={css.findingsSection}>
@@ -320,13 +346,15 @@ function AuditView({
           <strong>{`${t('audit.findings')} (${String(live.result.findings.length)})`}</strong>
         </div>
         {live.result.findings.length === 0 ? (
-          <p className={css.noFindings}>✓ {t('audit.noFindings')}</p>
+          <p className={incomplete ? css.incompleteFindings : css.noFindings}>
+            {incomplete ? t('audit.partialNoFindings') : `✓ ${t('audit.noFindings')}`}
+          </p>
         ) : (
           <div className={css.findingRows}>
             {live.result.findings.map(finding => (
               <div className={css.findingRow} key={finding.id}>
                 <div>
-                  <strong>{t(ENTITY_KEYS[finding.entityType])}</strong>
+                  <strong>{findingTypeLabel(finding, t)}</strong>
                   <small>{t(CATEGORY_KEYS[finding.category])}</small>
                 </div>
                 <code>{finding.maskedEvidence}</code>
@@ -334,7 +362,11 @@ function AuditView({
                   <DetectorBadge mode={finding.detector} t={t} />
                   <span>{finding.detector === 'regex'
                     ? ruleDisplayName(finding.ruleId, finding.entityType, finding.ruleName, t)
-                    : `${Math.round(finding.confidence * 100)}%`}</span>
+                    : finding.detector === 'zeroclave'
+                      ? t('audit.gatewayFinding')
+                      : finding.confidence === undefined
+                        ? t('audit.modelFinding')
+                        : `${Math.round(finding.confidence * 100)}%`}</span>
                 </div>
               </div>
             ))}
@@ -630,7 +662,7 @@ function SendReviewView({ controller, review, t }: {
         <article className={css.reviewFinding} key={key}>
           <div className={css.reviewFindingText}>
             <div className={css.reviewFindingTitle}>
-              <strong>{t(ENTITY_KEYS[finding.entityType])}</strong>
+              <strong>{findingTypeLabel(finding, t)}</strong>
               <span data-risk={finding.severity}>{t(RISK_KEYS[finding.severity])}</span>
             </div>
             <code>{finding.maskedEvidence}</code>
@@ -679,11 +711,13 @@ function ModelView({ controller, snapshot, t }: {
     const status = snapshot.detectorStates[mode].status
     if (status === 'ready') return mode === 'regex' ? 'model.running' : 'model.ready'
     if (status === 'loading') return 'model.loading'
+    if (status === 'partial') return 'model.partial'
     if (status === 'error') return 'model.error'
     if (status === 'unconfigured') return 'model.unconfigured'
-    return 'model.idle'
+    return mode === 'zeroclave' ? 'model.untested' : 'model.idle'
   }
   const embeddedState = snapshot.detectorStates.embedded
+  const zeroClaveState = snapshot.detectorStates.zeroclave
   return (
     <div className={css.tabPage}>
       <h3>{t('model.title')}</h3>
@@ -738,8 +772,69 @@ function ModelView({ controller, snapshot, t }: {
             : null}
         </div>
       ) : null}
+      {snapshot.detectorMode === 'zeroclave' ? (
+        <div className={css.modelActions}>
+          <button
+            className={css.primaryButton}
+            type="button"
+            disabled={zeroClaveState.status === 'loading'}
+            onClick={() => { void controller.testZeroClave() }}
+          >
+            {zeroClaveState.status === 'loading'
+              ? t('model.testing')
+              : zeroClaveState.status === 'idle' || zeroClaveState.status === 'unconfigured'
+                ? t('model.test')
+                : t('model.testAgain')}
+          </button>
+          <small>{t('model.gatewayRoute')}</small>
+          {zeroClaveState.status === 'partial'
+            ? <p className={css.partialWarning}>{t('model.partialDetail')}</p>
+            : null}
+          {zeroClaveState.status === 'error' && zeroClaveState.error !== undefined
+            ? <code>{zeroClaveState.code === undefined
+              ? zeroClaveState.error : `${zeroClaveState.code}: ${zeroClaveState.error}`}</code>
+            : null}
+          {zeroClaveState.requestId === undefined ? null : (
+            <small className={css.requestId}>{`${t('model.requestId')}: ${zeroClaveState.requestId}`}</small>
+          )}
+        </div>
+      ) : null}
+      {snapshot.detectorMode === 'zeroclave'
+        ? <><p className={css.gatewayNotice}>{t('model.gatewayNotice')}</p>
+          <p className={css.modelNote}>{t('model.textOnly')}</p></>
+        : null}
       <p className={css.modelNote}>{t('model.fallback')}</p>
-      <p className={css.modelNote}>{t('model.limitation')}</p>
+      {snapshot.detectorMode === 'embedded'
+        ? <p className={css.modelNote}>{t('model.limitation')}</p>
+        : null}
+      <section className={css.telemetrySection}>
+        <div className={css.telemetryHeading}>
+          <div><strong>{t('telemetry.title')}</strong><small>{t('telemetry.summary')}</small></div>
+        </div>
+        <p>{t('telemetry.detail')}</p>
+        <p>{snapshot.telemetry.lockedByGpc ? t('telemetry.gpc') : t('telemetry.network')}</p>
+        <div className={css.telemetryControl}>
+          <strong className={css.telemetryConsent}>{t('telemetry.consent')}</strong>
+          <label className={css.telemetryToggle} data-enabled={snapshot.telemetry.consent || undefined}>
+            <input
+              type="checkbox"
+              role="switch"
+              aria-label={t('telemetry.consent')}
+              checked={snapshot.telemetry.consent}
+              disabled={snapshot.telemetry.availability !== 'available' || snapshot.telemetry.lockedByGpc}
+              onChange={(event) => { controller.setTelemetryConsent(event.target.checked) }}
+            />
+            <span aria-hidden="true"><i /></span>
+            <em>{snapshot.telemetry.availability === 'checking'
+              ? t('telemetry.checking')
+              : snapshot.telemetry.lockedByGpc
+                ? t('telemetry.off')
+                : snapshot.telemetry.availability === 'unavailable'
+                  ? t('telemetry.unavailable')
+                  : snapshot.telemetry.consent ? t('telemetry.on') : t('telemetry.off')}</em>
+          </label>
+        </div>
+      </section>
     </div>
   )
 }

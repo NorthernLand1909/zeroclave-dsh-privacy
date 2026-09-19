@@ -10,13 +10,19 @@ interface PromptSession {
 
 type Method = (this: object, ...args: unknown[]) => Promise<unknown>
 
-function methodDescriptor(target: object, name: string): PropertyDescriptor {
+function optionalMethodDescriptor(target: object, name: string): PropertyDescriptor | undefined {
   let owner: object | null = target
   while (owner !== null) {
     const descriptor = Object.getOwnPropertyDescriptor(owner, name)
     if (descriptor !== undefined && typeof descriptor.value === 'function') return descriptor
     owner = Object.getPrototypeOf(owner) as object | null
   }
+  return undefined
+}
+
+function methodDescriptor(target: object, name: string): PropertyDescriptor {
+  const descriptor = optionalMethodDescriptor(target, name)
+  if (descriptor !== undefined) return descriptor
   throw new Error(`ZeroClave: unsupported Harness conversation.${name}`)
 }
 
@@ -24,6 +30,9 @@ function methodDescriptor(target: object, name: string): PropertyDescriptor {
 export function installSendRedaction(conversation: object, controller: PrivacyController): () => void {
   const own = Object.getOwnPropertyDescriptor(conversation, 'sendSession')
   const original = methodDescriptor(conversation, 'sendSession').value as Method
+  const ownSend = Object.getOwnPropertyDescriptor(conversation, 'send')
+  const sendDescriptor = optionalMethodDescriptor(conversation, 'send')
+  const originalSend = sendDescriptor?.value as Method | undefined
   const replacement: Method = async function (...args) {
     const session = args[0] as PromptSession | undefined
     if (!controller.getSnapshot().enabled) return original.apply(this, args)
@@ -55,8 +64,11 @@ export function installSendRedaction(conversation: object, controller: PrivacyCo
           signal?.throwIfAborted()
           const outcome = await target.prompt(outgoing, ...promptArgs)
           const resultsSent = scanned.map(item => item.result)
-          if (outcome.ok && resultsSent.some(result => result.findings.length > 0 || result.policySignals.length > 0)) {
-            controller.recordSend(target.sessionId, resultsSent)
+          if (outcome.ok) {
+            controller.reportTelemetry('protected_send')
+            if (resultsSent.some(result => result.findings.length > 0 || result.policySignals.length > 0)) {
+              controller.recordSend(target.sessionId, resultsSent)
+            }
           }
           return outcome
         }
@@ -68,9 +80,23 @@ export function installSendRedaction(conversation: object, controller: PrivacyCo
   }
   // Cordis tracks method reads. A descriptor replacement preserves the caller's scoped `this`.
   Object.defineProperty(conversation, 'sendSession', { configurable: true, writable: true, value: replacement })
+  const sendReplacement: Method | undefined = originalSend === undefined ? undefined : async function (...args) {
+    if (controller.getSnapshot().enabled) {
+      throw new Error('ZeroClave: conversation.send is blocked while privacy detection is enabled; use the composer')
+    }
+    return originalSend.apply(this, args)
+  }
+  if (sendReplacement !== undefined) {
+    Object.defineProperty(conversation, 'send', { configurable: true, writable: true, value: sendReplacement })
+  }
   return () => {
-    if (Object.getOwnPropertyDescriptor(conversation, 'sendSession')?.value !== replacement) return
-    if (own === undefined) Reflect.deleteProperty(conversation, 'sendSession')
-    else Object.defineProperty(conversation, 'sendSession', own)
+    if (Object.getOwnPropertyDescriptor(conversation, 'sendSession')?.value === replacement) {
+      if (own === undefined) Reflect.deleteProperty(conversation, 'sendSession')
+      else Object.defineProperty(conversation, 'sendSession', own)
+    }
+    if (sendReplacement !== undefined && Object.getOwnPropertyDescriptor(conversation, 'send')?.value === sendReplacement) {
+      if (ownSend === undefined) Reflect.deleteProperty(conversation, 'send')
+      else Object.defineProperty(conversation, 'send', ownSend)
+    }
   }
 }

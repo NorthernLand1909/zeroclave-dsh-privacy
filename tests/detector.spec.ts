@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { scanRegex, mergeModelCandidates, ZeroClaveDetector } from '../src/detector.ts'
+import { scanRegex, mergeModelCandidates } from '../src/detector.ts'
 import { EmbeddedModelDetector, tokenEntitiesToCandidates } from '../src/embedded-model.ts'
 
 describe('privacy regex detector', () => {
@@ -99,17 +99,5 @@ describe('embedded model adapter', () => {
     const result = await detector.scan('demo@example.com')
     expect(detector.available()).toBe(false)
     expect(result.detector).toEqual({ requested: 'embedded', used: 'regex', fallback: true })
-  })
-})
-
-describe('ZeroClave provider placeholder', () => {
-  it('stays explicitly unavailable and falls back to regex', async () => {
-    const detector = new ZeroClaveDetector()
-    expect(detector.available()).toBe(false)
-    expect((await detector.scan('demo@example.com')).detector).toEqual({
-      requested: 'zeroclave',
-      used: 'regex',
-      fallback: true,
-    })
   })
 })

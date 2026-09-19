@@ -14,9 +14,10 @@ An experimental, local-first privacy plugin for the DeepSeek Harness Web UI.
 - Saves restoration mappings in browser IndexedDB before sending, so the same browser can restore messages after reload.
 - Shows the detector source on every finding and keeps the latest ten summary-only send records per DSH session.
 - Shows the current findings, redacted preview, and session send activity in one DSH detection view.
-- Leaves a disabled `ZeroClaveDetector` Provider as the future remote integration point.
+- Supports the anonymous ZeroClave Gateway detector through a same-origin DSH Host proxy, with no API key.
+- Offers privacy-preserving product telemetry as an explicit opt-in, disabled by default.
 
-With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan or mapping write prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
+With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan, a partial ZeroClave result, or a mapping write failure prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
 
 The default send policy pauses a message containing critical findings before Host admission. The review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Detection settings**.
 
@@ -28,15 +29,67 @@ Session activity contains only time, counts, highest risk, detector modes, and f
 | --- | --- | --- | --- |
 | Regex | Browser | None | Ready |
 | Embedded BERT | Browser WASM | Downloads pinned model files on first load; draft text is not sent to Hugging Face | Ready |
-| ZeroClave | Remote | None until a Provider is implemented | Reserved |
+| ZeroClave | Remote Gateway | Sends draft plaintext through the same-origin DSH Host proxy to the configured ZeroClave Gateway over HTTPS; no API key | Ready when the public Gateway route is deployed |
 
 The embedded model is pinned to revision `f8c27a85c51c0168f07b9dcf00265bf0a4097939` and loads the repository's 28.7 MB `model.quant.onnx` artifact. Browser cache avoids downloading the weights again in normal use.
+
+### ZeroClave Gateway
+
+The browser calls the plugin's same-origin `/api/zeroclave-privacy/detect` route. The DSH Host forwards that request to the configured Gateway base URL, which defaults to `https://zeroclave.com/v1`, and never adds an API key or authorization header. Keeping the browser request same-origin avoids depending on the Gateway's site CORS allowlist.
+
+This route is not a client-to-TEE end-to-end encrypted channel. The DSH Host and ZeroClave Gateway can see the draft plaintext during detection. The public API returns only entity positions and types; replacement and restoration remain client-side. Its contract also states that anonymous cache entries contain a text hash plus positions and types, not plaintext or entity values.
+
+The target Gateway must publish the anonymous `POST /v1/pii/detect` route and enable `PII_PUBLIC_DETECT_ENABLED`. Until that release is present, the UI connection test reports the route as unavailable and ZeroClave sends remain blocked. A `partial` response is always shown as incomplete, including when its entity list is empty, and is never treated as a clean scan.
+
+## Optional product telemetry
+
+Telemetry is off by default and requires both user consent in **Detection
+settings** and an administrator-enabled Host relay. Global Privacy Control
+forces it off. Third-party installations without a provisioned Host credential
+do not send anything.
+
+The independently deployable Cloudflare Workers + D1 implementation lives in
+[`services/telemetry`](services/telemetry).
+
+The browser sends only a fresh 16-byte random identifier for the current UTC
+day, the plugin version, and one of three fixed events: a successful non-empty
+privacy inspection, a successful protected send, or the detector actually
+used (`regex`, `embedded`, or `zeroclave`). Each event/value is delivered at
+most once per browser profile per day. It does not send message or redacted
+text, findings, entity types or counts, custom rules, session/account IDs,
+request IDs, errors, latency, URLs, locale, or device attributes. The resulting
+DAU is a count of active browser profiles, not people.
+
+The browser calls only the same-origin DSH Host. The Host validates and
+rebuilds a fixed payload, adds the trusted package version, and authenticates
+the request to the standalone telemetry Worker with HMAC. The key comes only
+from the environment variable named by `telemetrySecretEnv`; it is never a
+Cordis value or browser asset. Configure an official Host explicitly:
+
+```yaml
+telemetryEnabled: true
+telemetryEndpoint: https://telemetry.example.com
+telemetryKeyId: dsh-prod-1
+telemetrySecretEnv: ZEROCLAVE_TELEMETRY_HMAC_SECRET
+telemetryTimeoutMs: 2000
+```
+
+Telemetry is best-effort and never blocks detection, redaction, or sending.
+Withdrawing consent aborts pending browser delivery and clears its dedicated
+telemetry IndexedDB. The service stores only a keyed daily hash, not the raw
+daily identifier. Online event rows are deleted by the first hourly cleanup
+after they reach 48 hours (less than 49 hours), while aggregate counts contain
+no identifier. Cloudflare D1 Time Travel may still recover deleted database
+state for 7 days on Free or 30 days on Paid. Cloudflare also processes the
+Host's egress connection metadata at its network edge. A holder of a Host key
+can fabricate events, so these metrics are for product trends only, not
+billing, abuse decisions, or security policy.
 
 ## Regex coverage
 
 The deterministic layer currently recognizes common email addresses, mainland China phone numbers, labeled Chinese national IDs, social credit codes, contract parties and identifiers, addresses, bank details, financial amounts, IPv4 addresses, Luhn-valid payment cards, checksum-valid IBANs, labeled passwords, common API token prefixes, and PEM private keys.
 
-Every finding contains a category, entity type, character range, masked evidence, confidence, severity, detector id, and replacement placeholder. The raw evidence is never included in the normalized JSON view.
+Every finding contains a category, entity type, character range, masked evidence, severity, detector id, and replacement placeholder. Local regex and BERT findings also carry confidence. The Gateway contract does not return confidence, so ZeroClave findings do not display or export a fabricated score. The raw evidence is never included in the normalized JSON view.
 
 ### Custom regex rules
 
@@ -68,19 +121,22 @@ For distribution, build first and create a tarball with `pnpm --filter @zeroclav
 ## Security boundaries
 
 - Scanning is disabled by default and the enabled flag is stored only in browser local storage.
-- Regex and BERT inference inspect text drafts only. Attachments, images, audio, and tool payloads are not scanned.
+- Regex, BERT, and ZeroClave inference inspect text drafts only. Attachments, images, audio, and tool payloads are not scanned.
 - Loading the model contacts Hugging Face for public model artifacts. It does not make the model remote and does not send draft text.
+- Selecting ZeroClave sends draft plaintext through the DSH Host proxy to the configured ZeroClave Gateway over HTTPS. The anonymous endpoint requires no API key, but it is not E2EE and the Gateway can read the plaintext.
 - The selected BERT model is English-focused. Chinese structured fields rely primarily on regex rules.
 - Detection has false positives and false negatives. It is a review aid, not a compliance guarantee.
-- Enabled composer sends deliver only their redacted text to DSH and its configured model Provider. Disabling privacy sends original text.
+- With regex or embedded BERT, enabled composer sends deliver only redacted text to DSH and its configured chat-model Provider. With ZeroClave, DSH Host and the detection Gateway first receive plaintext for detection; the conversation and chat-model Provider receive only the redacted result. Disabling privacy sends original text.
+- While privacy is enabled, the browser's lower-level `conversation.send(text)` shortcut is blocked because it cannot preserve the composer's session-aware restoration mapping. Use the normal composer path.
 - Restoration mappings contain original sensitive values and stay in IndexedDB on the browser origin. They are never included in the outgoing prompt or the Host session log. Clearing browser data, changing origin/browser, or opening the conversation on another device removes access to those mappings.
 - Display restoration is limited to visible message prose. Markdown destinations, code, attachment metadata, paths, identifiers, and tool payloads retain placeholders.
 - Old `__PII_*__` messages from releases through alpha.5 have no durable restoration map. Unknown placeholders are preserved; the plugin cannot reconstruct their originals.
-- The ZeroClave mode is visibly unconfigured and falls back to regex. It does not perform a hidden network request.
+- ZeroClave requests are visible in the detection settings, expose connection errors, and use a longer draft debounce. Service failures and incomplete results block sending instead of being interpreted as no findings.
+- Product telemetry is separately opt-in, defaults off, respects GPC, and never contains draft text or detection results. Network-level metadata handled by Cloudflare is outside the event schema.
 
 ## Known Limitations and Deferred Work
 
-- Automatic redaction covers the Web composer's queue and steer sends. Direct API/automation requests and slash-command execution do not pass through this browser-only adapter.
+- Automatic redaction covers the Web composer's queue and steer sends. Direct Host API/automation requests and slash-command execution outside this browser adapter are not covered; the browser-level `conversation.send(text)` shortcut is blocked while privacy is enabled.
 - Custom expressions use the browser's JavaScript regular-expression syntax. The editor does not provide RE2 compatibility or import/export in this alpha.
 - Mapping inheritance for forked sessions and synchronization across devices are not implemented.
 - This alpha adapts the public `conversation.sendSession` method and Chat `StoredEntry.component` renderers because the supported Harness versions have no dedicated redaction middleware. Both adapters unwind when the plugin unloads and require compatibility checks on Harness upgrades. They never rewrite durable messages or model history.

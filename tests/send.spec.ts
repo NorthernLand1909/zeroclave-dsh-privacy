@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PrivacyController } from '../src/controller.ts'
 import { installSendRedaction } from '../src/send.ts'
+import type { TelemetryReporter } from '../src/telemetry.ts'
 import { PrivacyVault } from '../src/vault.ts'
 import { memoryStore } from './memory-store.ts'
 
@@ -18,7 +19,53 @@ class Composer {
   }
 }
 
+function telemetryReporter(report: TelemetryReporter['report']): TelemetryReporter {
+  return {
+    consent: true,
+    lockedByGpc: false,
+    initialize: async () => 'available',
+    setConsent: consent => consent,
+    setConsentListener: () => undefined,
+    report,
+    dispose: async () => undefined,
+  }
+}
+
 describe('composer send boundary', () => {
+  it('records a protected zero-finding send only after success and never awaits telemetry delivery', async () => {
+    const pendingDelivery = new Promise<void>(() => undefined)
+    const successfulReport = vi.fn(() => { void pendingDelivery })
+    const successful = new PrivacyController(
+      new PrivacyVault(memoryStore()), undefined, undefined, telemetryReporter(successfulReport),
+    )
+    successful.setEnabled(true)
+    const successfulComposer = new Composer()
+    installSendRedaction(successfulComposer, successful)
+
+    await successfulComposer.sendSession(
+      { sessionId: 'success', prompt: vi.fn(async () => ({ ok: true })) }, 'nothing sensitive', [], 'queue',
+    )
+
+    expect(successfulReport.mock.calls.filter(call => call[0] === 'protected_send')).toEqual([
+      ['protected_send', undefined],
+    ])
+    expect(successful.getSnapshot().sendRecordsBySession.size).toBe(0)
+
+    const rejectedReport = vi.fn()
+    const rejected = new PrivacyController(
+      new PrivacyVault(memoryStore()), undefined, undefined, telemetryReporter(rejectedReport),
+    )
+    rejected.setEnabled(true)
+    const rejectedComposer = new Composer()
+    installSendRedaction(rejectedComposer, rejected)
+
+    await rejectedComposer.sendSession(
+      { sessionId: 'rejected', prompt: vi.fn(async () => ({ ok: false })) }, 'nothing sensitive', [], 'queue',
+    )
+
+    expect(rejectedReport.mock.calls.some(call => call[0] === 'protected_send')).toBe(false)
+  })
+
   it('sends redacted text and keeps the composer echo, attachment and admission metadata intact', async () => {
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
@@ -52,6 +99,37 @@ describe('composer send boundary', () => {
     expect(prompt).not.toHaveBeenCalled()
     expect(composer.echo).toBe('demo@example.com')
     expect(controller.getSnapshot().sendRecordsBySession.size).toBe(0)
+  })
+
+  it('stops a send cancelled while the vault write is still pending', async () => {
+    let releaseWrite: (() => void) | undefined
+    const writeStarted = new Promise<void>((resolve) => {
+      releaseWrite = resolve
+    })
+    let enteredWrite: (() => void) | undefined
+    const entered = new Promise<void>((resolve) => { enteredWrite = resolve })
+    const store = memoryStore()
+    const controller = new PrivacyController(new PrivacyVault({
+      ...store,
+      write: async (mappings) => {
+        enteredWrite?.()
+        await writeStarted
+        await store.write(mappings)
+      },
+    }))
+    controller.setEnabled(true)
+    const composer = new Composer()
+    installSendRedaction(composer, controller)
+    const prompt = vi.fn(async () => ({ ok: true }))
+
+    const sending = composer.sendSession({ sessionId: 's1', prompt }, 'demo@example.com', [], 'queue')
+    await entered
+    controller.setEnabled(false)
+    releaseWrite?.()
+
+    await expect(sending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(prompt).not.toHaveBeenCalled()
+    expect(composer.echo).toBe('demo@example.com')
   })
 
   it('pauses a critical send for one review and applies per-finding choices', async () => {
@@ -162,5 +240,25 @@ describe('composer send boundary', () => {
     expect(session.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'demo@example.com' }], 'queue', undefined, 'request-1')
     dispose()
     expect(Reflect.get(composer, 'sendSession')).toBe(original)
+  })
+
+  it('blocks the lower-level conversation.send path while privacy is enabled', async () => {
+    class ProgrammaticConversation extends Composer {
+      async send(text: string): Promise<void> { this.echo = text }
+    }
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    const conversation = new ProgrammaticConversation()
+    const dispose = installSendRedaction(conversation, controller)
+    controller.setEnabled(true)
+
+    await expect(conversation.send('demo@example.com')).rejects.toThrow('blocked while privacy detection is enabled')
+    expect(conversation.echo).toBe('')
+    controller.setEnabled(false)
+    await conversation.send('plain text')
+    expect(conversation.echo).toBe('plain text')
+    dispose()
+    controller.setEnabled(true)
+    await conversation.send('after unload')
+    expect(conversation.echo).toBe('after unload')
   })
 })

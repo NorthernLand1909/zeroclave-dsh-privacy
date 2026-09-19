@@ -6,6 +6,9 @@ import {
   loadRegexRules, RegexRuleError, runRegexWorker, saveRegexRules, scanConfiguredRules, validateRule,
 } from './regex-rules.ts'
 import type { RegexExecutor } from './regex-rules.ts'
+import { ZeroClaveDetectError, ZeroClaveDetector } from './zeroclave-detector.ts'
+import { PrivacyTelemetry } from './telemetry.ts'
+import type { TelemetryDetector, TelemetryEvent, TelemetryReporter } from './telemetry.ts'
 import type {
   DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
 } from './types.ts'
@@ -51,12 +54,26 @@ function privacyEnabled(snapshot: PrivacySnapshot): boolean {
 }
 
 export class PrivacyController {
-  constructor(readonly vault = new PrivacyVault(), private readonly executeRegex: RegexExecutor = runRegexWorker) {}
+  constructor(
+    readonly vault = new PrivacyVault(),
+    private readonly executeRegex: RegexExecutor = runRegexWorker,
+    private readonly zeroclave = new ZeroClaveDetector(),
+    private readonly telemetryReporter: TelemetryReporter = new PrivacyTelemetry(),
+  ) {
+    this.snapshot = { ...this.snapshot, telemetry: {
+      consent: this.telemetryReporter.consent,
+      availability: 'checking',
+      lockedByGpc: this.telemetryReporter.lockedByGpc,
+    } }
+  }
   private readonly embedded = new EmbeddedModelDetector()
   private readonly storedRules = loadRegexRules()
   private settingsError = this.storedRules.error
   private readonly lifetime = new AbortController()
   private readonly inspections = new Map<string, AbortController>()
+  private readonly sends = new Set<AbortController>()
+  private zeroClaveTest: AbortController | undefined
+  private zeroClaveStateOwner = 0
   private snapshot: PrivacySnapshot = {
     enabled: storedEnabled(),
     open: false,
@@ -65,7 +82,7 @@ export class PrivacyController {
     detectorStates: {
       regex: { status: 'ready' },
       embedded: { status: 'idle' },
-      zeroclave: { status: 'unconfigured' },
+      zeroclave: { status: 'idle' },
     },
     liveBySession: new Map(),
     sendRecordsBySession: new Map(),
@@ -73,6 +90,11 @@ export class PrivacyController {
     regexRevision: 0,
     regexError: this.storedRules.error,
     sendPolicy: storedSendPolicy(),
+    telemetry: {
+      consent: false,
+      availability: 'checking',
+      lockedByGpc: false,
+    },
   }
 
   private readonly listeners = new Set<() => void>()
@@ -90,8 +112,42 @@ export class PrivacyController {
     return () => { this.listeners.delete(listener) }
   }
 
+  async initializeTelemetry(): Promise<void> {
+    this.telemetryReporter.setConsentListener((consent) => {
+      if (this.lifetime.signal.aborted) return
+      this.update({ ...this.snapshot, telemetry: {
+        ...this.snapshot.telemetry,
+        consent,
+        lockedByGpc: this.telemetryReporter.lockedByGpc,
+      } })
+    })
+    const availability = await this.telemetryReporter.initialize(this.lifetime.signal)
+    if (this.lifetime.signal.aborted) return
+    this.update({ ...this.snapshot, telemetry: {
+      consent: this.telemetryReporter.consent,
+      availability,
+      lockedByGpc: this.telemetryReporter.lockedByGpc,
+    } })
+  }
+
+  setTelemetryConsent(consent: boolean): void {
+    const resolved = this.telemetryReporter.setConsent(consent)
+    this.update({ ...this.snapshot, telemetry: {
+      ...this.snapshot.telemetry,
+      consent: resolved,
+      lockedByGpc: this.telemetryReporter.lockedByGpc,
+    } })
+  }
+
+  reportTelemetry(event: TelemetryEvent, value?: TelemetryDetector): void {
+    this.telemetryReporter.report(event, value)
+  }
+
   setEnabled(enabled: boolean): void {
-    if (!enabled) this.cancelSendReview()
+    if (!enabled) {
+      this.cancelSendReview()
+      this.cancelActiveOperations()
+    }
     try {
       window.localStorage.setItem(ENABLED_STORAGE_KEY, String(enabled))
     } catch {
@@ -133,10 +189,9 @@ export class PrivacyController {
   }
 
   setDetectorMode(detectorMode: DetectorMode): void {
+    if (detectorMode === this.snapshot.detectorMode) return
+    this.cancelActiveOperations()
     this.update({ ...this.snapshot, detectorMode })
-    for (const [sessionId, live] of this.snapshot.liveBySession) {
-      void this.inspect(sessionId, live.text)
-    }
   }
 
   scan(text: string): ScanResult {
@@ -172,11 +227,10 @@ export class PrivacyController {
 
   private commitRules(rules: readonly EditableRegexRule[]): void {
     saveRegexRules(rules)
+    this.cancelActiveOperations()
     this.settingsError = undefined
-    const live = [...this.snapshot.liveBySession]
     this.update({ ...this.snapshot, regexRules: rules, regexRevision: this.snapshot.regexRevision + 1,
       regexError: undefined, liveBySession: new Map() })
-    for (const [id, state] of live) void this.inspect(id, state.text)
   }
 
   async inspect(sessionId: string, text: string, signal?: AbortSignal): Promise<void> {
@@ -190,32 +244,69 @@ export class PrivacyController {
     this.updateLive(sessionId, text, baseline)
     if (!this.snapshot.enabled || aborted(signal)) return
     let result: ScanResult
+    let zeroClaveOwner: number | undefined
     try {
       if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
       const candidates = await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
-      result = requested === 'embedded' && this.embedded.available()
-        ? await this.embedded.scan(text, signal, candidates)
-        : finalizeScan(text, candidates, requested, 'regex', requested !== 'regex')
+      if (requested === 'zeroclave') {
+        zeroClaveOwner = this.beginZeroClaveOperation()
+        const [remote] = await this.zeroclave.scanBatch([{
+          id: 'draft', revision: `r-${randomUUID()}`, text, regex: candidates,
+        }], signal)
+        if (remote === undefined) {
+          throw new ZeroClaveDetectError('detector_response_invalid', 'ZeroClave result is missing')
+        }
+        result = remote
+      } else {
+        result = requested === 'embedded' && this.embedded.available()
+          ? await this.embedded.scan(text, signal, candidates)
+          : finalizeScan(text, candidates, requested, 'regex', requested !== 'regex')
+      }
     } catch (error) {
-      if (aborted(signal) || (error instanceof DOMException && error.name === 'AbortError')) return
+      if (aborted(signal) || (error instanceof DOMException && error.name === 'AbortError')) {
+        this.releaseZeroClaveOperation(zeroClaveOwner)
+        return
+      }
+      const current = this.snapshot.liveBySession.get(sessionId)
+      if (this.snapshot.detectorMode !== requested || current?.text !== text
+        || this.snapshot.regexRevision !== revision) {
+        this.releaseZeroClaveOperation(zeroClaveOwner)
+        return
+      }
       if (error instanceof RegexRuleError) {
         this.update({ ...this.snapshot, regexError: error.code })
         return
       }
-      this.setDetectorState(requested, {
-        status: 'error',
-        error: error instanceof Error ? error.message : String(error),
+      if (requested === 'zeroclave') this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))
+      else this.setDetectorState(requested, {
+        status: 'error', error: error instanceof Error ? error.message : String(error),
       })
       return
     } finally {
       if (this.inspections.get(sessionId) === operation) this.inspections.delete(sessionId)
     }
-    if (aborted(signal)) return
+    if (aborted(signal)) {
+      this.releaseZeroClaveOperation(zeroClaveOwner)
+      return
+    }
     const current = this.snapshot.liveBySession.get(sessionId)
     if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested || current?.text !== text
-      || this.snapshot.regexRevision !== revision) return
+      || this.snapshot.regexRevision !== revision) {
+      this.releaseZeroClaveOperation(zeroClaveOwner)
+      return
+    }
     if (this.snapshot.regexError !== undefined) this.update({ ...this.snapshot, regexError: undefined })
+    if (requested === 'zeroclave') {
+      this.finishZeroClaveOperation(zeroClaveOwner, {
+        status: result.detector.status === 'partial' ? 'partial' : 'ready',
+        ...(result.detector.requestId === undefined ? {} : { requestId: result.detector.requestId }),
+      })
+    }
     this.updateLive(sessionId, text, result)
+    if (text.length > 0) {
+      this.reportTelemetry('privacy_active')
+      this.reportTelemetry('detector_used', result.detector.used)
+    }
   }
 
   async loadEmbedded(): Promise<void> {
@@ -224,17 +315,44 @@ export class PrivacyController {
     this.setDetectorState('embedded', { status: 'loading', progress: 0 })
     try {
       await this.embedded.load((progress) => {
-        this.setDetectorState('embedded', { status: 'loading', progress })
+        if (!this.lifetime.signal.aborted) this.setDetectorState('embedded', { status: 'loading', progress })
       })
-      this.setDetectorState('embedded', { status: 'ready', progress: 100 })
-      for (const [sessionId, live] of this.snapshot.liveBySession) {
-        if (this.snapshot.detectorMode === 'embedded') void this.inspect(sessionId, live.text)
+      if (this.lifetime.signal.aborted) {
+        await this.embedded.dispose()
+        return
       }
+      this.setDetectorState('embedded', { status: 'ready', progress: 100 })
     } catch (error) {
+      if (this.lifetime.signal.aborted) return
       this.setDetectorState('embedded', {
         status: 'error',
         error: error instanceof Error ? error.message : String(error),
       })
+    }
+  }
+
+  async testZeroClave(signal?: AbortSignal): Promise<void> {
+    this.zeroClaveTest?.abort()
+    const operation = new AbortController()
+    this.zeroClaveTest = operation
+    const owner = this.beginZeroClaveOperation()
+    const combined = AbortSignal.any([
+      operation.signal, this.lifetime.signal, ...(signal === undefined ? [] : [signal]),
+    ])
+    try {
+      const result = await this.zeroclave.scan('', combined)
+      this.finishZeroClaveOperation(owner, {
+        status: result.detector.status === 'partial' ? 'partial' : 'ready',
+        ...(result.detector.requestId === undefined ? {} : { requestId: result.detector.requestId }),
+      })
+    } catch (error) {
+      if (combined.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+        this.releaseZeroClaveOperation(owner)
+        return
+      }
+      this.finishZeroClaveOperation(owner, this.zeroClaveError(error))
+    } finally {
+      if (this.zeroClaveTest === operation) this.zeroClaveTest = undefined
     }
   }
 
@@ -243,51 +361,108 @@ export class PrivacyController {
   }
 
   async prepareSendBatch(sessionId: string, texts: readonly string[], signal?: AbortSignal): Promise<ScanResult[]> {
-    signal = AbortSignal.any([this.lifetime.signal, ...(signal === undefined ? [] : [signal])])
-    signal.throwIfAborted()
-    if (!this.snapshot.enabled) return texts.map(text => disabledResult(text, this.snapshot.detectorMode))
+    const operation = new AbortController()
+    this.sends.add(operation)
+    signal = AbortSignal.any([operation.signal, this.lifetime.signal, ...(signal === undefined ? [] : [signal])])
     const requested = this.snapshot.detectorMode
-    const revision = this.snapshot.regexRevision
-    if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
-    const scanned: ScanResult[] = []
+    let zeroClaveOwner: number | undefined
     try {
+      signal.throwIfAborted()
+      if (!this.snapshot.enabled) return texts.map(text => disabledResult(text, requested))
+      if (texts.length === 0) return []
+      const revision = this.snapshot.regexRevision
+      if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
+      const candidates: Awaited<ReturnType<typeof scanConfiguredRules>>[] = []
       for (const text of texts) {
-        const candidates = await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
-        scanned.push(requested === 'embedded' && this.embedded.available()
-          ? await this.embedded.scan(text, signal, candidates)
-          : finalizeScan(text, candidates, requested, 'regex', requested !== 'regex'))
+        candidates.push(await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal))
       }
+      let scanned: ScanResult[]
+      try {
+        if (requested === 'zeroclave') {
+          zeroClaveOwner = this.beginZeroClaveOperation()
+          scanned = await this.zeroclave.scanBatch(texts.map((text, index) => ({
+            id: `text-${String(index)}`,
+            revision: `r-${randomUUID()}`,
+            text,
+            regex: candidates[index] ?? [],
+          })), signal)
+          const partial = scanned.find(result => result.detector.status === 'partial')
+          if (partial !== undefined) {
+            const partialError = new ZeroClaveDetectError(
+              'partial_result', 'ZeroClave detection was incomplete; retry before sending', 200,
+              partial.detector.requestId,
+            )
+            if (this.finishZeroClaveOperation(zeroClaveOwner, {
+              status: 'partial', code: partialError.code,
+              ...(partialError.status === undefined ? {} : { statusCode: partialError.status }),
+              ...(partialError.requestId === undefined ? {} : { requestId: partialError.requestId }),
+            })) this.showDetectorDetails()
+            throw partialError
+          }
+          this.finishZeroClaveOperation(zeroClaveOwner, {
+            status: 'ready',
+            ...(scanned[0]?.detector.requestId === undefined ? {} : { requestId: scanned[0].detector.requestId }),
+          })
+        } else {
+          scanned = []
+          for (const [index, text] of texts.entries()) {
+            const itemCandidates = candidates[index] ?? []
+            scanned.push(requested === 'embedded' && this.embedded.available()
+              ? await this.embedded.scan(text, signal, itemCandidates)
+              : finalizeScan(text, itemCandidates, requested, 'regex', requested !== 'regex'))
+          }
+        }
+      } catch (error) {
+        if (error instanceof RegexRuleError) this.update({ ...this.snapshot, regexError: error.code })
+        if (requested === 'zeroclave' && !signal.aborted
+          && !(error instanceof ZeroClaveDetectError && error.code === 'partial_result')) {
+          if (this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))) this.showDetectorDetails()
+        }
+        throw error
+      }
+      signal.throwIfAborted()
+      if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
+        || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
+      if (texts.some(text => text.length > 0)) this.reportTelemetry('privacy_active')
+      for (const detector of new Set(scanned.filter((_, index) => (texts[index]?.length ?? 0) > 0)
+        .map(result => result.detector.used))) this.reportTelemetry('detector_used', detector)
+      let decisions: Readonly<Record<string, boolean>> | undefined
+      if (scanned.some(result => result.overallRisk === 'critical') && this.snapshot.sendPolicy === 'review-critical') {
+        const parts = texts.map((text, index) => {
+          const result = scanned[index]
+          if (result === undefined) throw new Error('Privacy scan result missing')
+          return { text, result }
+        })
+        decisions = await this.requestSendReview(sessionId, parts, signal)
+        if (decisions === undefined) throw new SendReviewCancelledError('Send cancelled during privacy review')
+      }
+      signal.throwIfAborted()
+      if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
+        || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
+      const outgoing: ScanResult[] = []
+      for (const [index, result] of scanned.entries()) {
+        this.assertSendCurrent(signal, requested, revision)
+        const text = texts[index]
+        if (text === undefined) throw new Error('Privacy scan input missing')
+        const redacted = await this.vault.redact(sessionId, text, {
+          ...result,
+          findings: result.findings.map(finding => ({
+            ...finding,
+            action: decisions?.[`${String(index)}:${finding.id}`] === false ? 'kept' : 'redacted',
+          })),
+        })
+        this.assertSendCurrent(signal, requested, revision)
+        outgoing.push(redacted)
+      }
+      this.assertSendCurrent(signal, requested, revision)
+      return outgoing
     } catch (error) {
       if (error instanceof RegexRuleError) this.update({ ...this.snapshot, regexError: error.code })
       throw error
+    } finally {
+      this.sends.delete(operation)
+      if (signal.aborted) this.releaseZeroClaveOperation(zeroClaveOwner)
     }
-    signal.throwIfAborted()
-    if (this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
-    let decisions: Readonly<Record<string, boolean>> | undefined
-    if (scanned.some(result => result.overallRisk === 'critical') && this.snapshot.sendPolicy === 'review-critical') {
-      const parts = texts.map((text, index) => {
-        const result = scanned[index]
-        if (result === undefined) throw new Error('Privacy scan result missing')
-        return { text, result }
-      })
-      decisions = await this.requestSendReview(sessionId, parts, signal)
-      if (decisions === undefined) throw new SendReviewCancelledError('Send cancelled during privacy review')
-    }
-    signal.throwIfAborted()
-    if (this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
-    const outgoing: ScanResult[] = []
-    for (const [index, result] of scanned.entries()) {
-      const text = texts[index]
-      if (text === undefined) throw new Error('Privacy scan input missing')
-      outgoing.push(await this.vault.redact(sessionId, text, {
-        ...result,
-        findings: result.findings.map(finding => ({
-          ...finding,
-          action: decisions?.[`${String(index)}:${finding.id}`] === false ? 'kept' : 'redacted',
-        })),
-      }))
-    }
-    return outgoing
   }
 
   private requestSendReview(
@@ -327,11 +502,13 @@ export class PrivacyController {
 
   async dispose(): Promise<void> {
     this.cancelSendReview()
+    this.cancelActiveOperations()
     this.lifetime.abort()
     this.inspections.clear()
     this.listeners.clear()
     await this.embedded.dispose()
     await this.vault.dispose()
+    await this.telemetryReporter.dispose()
   }
 
   updateLive(sessionId: string, text: string, result: ScanResult): void {
@@ -340,6 +517,9 @@ export class PrivacyController {
       previous?.text === text
       && previous.result.detector.requested === result.detector.requested
       && previous.result.detector.used === result.detector.used
+      && previous.result.detector.status === result.detector.status
+      && previous.result.detector.model === result.detector.model
+      && previous.result.detector.requestId === result.detector.requestId
       && previous.result.redactedText === result.redactedText
     ) return
     const liveBySession = new Map(this.snapshot.liveBySession)
@@ -371,11 +551,61 @@ export class PrivacyController {
     this.update({ ...this.snapshot, sendRecordsBySession })
   }
 
+  private assertSendCurrent(signal: AbortSignal, requested: DetectorMode, revision: number): void {
+    signal.throwIfAborted()
+    if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
+      || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
+  }
+
+  private beginZeroClaveOperation(): number {
+    const owner = ++this.zeroClaveStateOwner
+    this.setDetectorState('zeroclave', { status: 'loading' })
+    return owner
+  }
+
+  private finishZeroClaveOperation(owner: number | undefined, state: DetectorRuntimeState): boolean {
+    if (owner === undefined || owner !== this.zeroClaveStateOwner) return false
+    this.setDetectorState('zeroclave', state)
+    return true
+  }
+
+  private releaseZeroClaveOperation(owner: number | undefined): void {
+    if (owner !== this.zeroClaveStateOwner || this.snapshot.detectorStates.zeroclave.status !== 'loading') return
+    this.setDetectorState('zeroclave', { status: 'idle' })
+  }
+
+  private zeroClaveError(error: unknown): DetectorRuntimeState {
+    if (error instanceof ZeroClaveDetectError) {
+      return {
+        status: 'error', error: error.message, code: error.code,
+        ...(error.status === undefined ? {} : { statusCode: error.status }),
+        ...(error.requestId === undefined ? {} : { requestId: error.requestId }),
+      }
+    }
+    return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+
   private setDetectorState(mode: DetectorMode, state: DetectorRuntimeState): void {
     this.update({
       ...this.snapshot,
       detectorStates: { ...this.snapshot.detectorStates, [mode]: state },
     })
+  }
+
+  private showDetectorDetails(): void {
+    this.update({ ...this.snapshot, open: true, activeTab: 'model' })
+  }
+
+  private cancelActiveOperations(): void {
+    this.zeroClaveStateOwner += 1
+    for (const operation of this.inspections.values()) operation.abort()
+    this.inspections.clear()
+    for (const operation of this.sends) operation.abort()
+    this.zeroClaveTest?.abort()
+    this.zeroClaveTest = undefined
+    if (this.snapshot.detectorStates.zeroclave.status === 'loading') {
+      this.setDetectorState('zeroclave', { status: 'idle' })
+    }
   }
 
   private update(snapshot: PrivacySnapshot): void {

@@ -26,7 +26,23 @@ const routes = new Map([
   ['/jsx.js', [resolve(reactRoot, 'cjs/react-jsx-runtime.production.min.js'), 'text/plain']],
   ['/react-dom.js', [resolve(reactDomRoot, 'umd/react-dom.development.js'), 'text/javascript']],
 ])
+const telemetryEvents = []
+let telemetryConfigRequests = 0
+const seenRequests = []
 const server = createServer(async (request, response) => {
+  seenRequests.push(`${request.method} ${request.url}`)
+  if (request.url === '/api/zeroclave-privacy/telemetry/config' && request.method === 'GET') {
+    telemetryConfigRequests += 1
+    response.writeHead(200, {'cache-control':'no-store','content-type':'application/json'}).end('{"enabled":true}')
+    return
+  }
+  if (request.url === '/api/zeroclave-privacy/telemetry/events' && request.method === 'POST') {
+    const chunks = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    telemetryEvents.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+    response.writeHead(204, {'cache-control':'no-store'}).end()
+    return
+  }
   const route = routes.get(request.url)
   if (route === undefined) { response.writeHead(404).end(); return }
   try {
@@ -37,6 +53,15 @@ const server = createServer(async (request, response) => {
 await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen))
 const address = server.address()
 const url = `http://127.0.0.1:${address.port}`
+if (process.env.ZEROCLAVE_PRIVACY_PREVIEW === '1') {
+  console.log(JSON.stringify({preview:true,url}))
+  await new Promise(resolveStop => {
+    const stop = () => { server.close(resolveStop) }
+    process.once('SIGINT', stop)
+    process.once('SIGTERM', stop)
+  })
+  process.exit(0)
+}
 let browser
 try {
   browser = await chromium.launch({ channel:'chrome', headless:true })
@@ -93,11 +118,48 @@ try {
   await page.locator('[data-testid="message"]').last().getByRole('button', {name:'复制'}).click()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `核对结果：\n${input}`)
   await page.reload()
+  await page.waitForTimeout(500)
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="message"]')[1]?.textContent.includes('demo@example.com'))
   assert.equal(await page.locator('[data-testid="message"] pre').first().textContent(), input)
   await page.getByRole('button', {name:'隐私检测',exact:true}).click()
   assert.equal(await page.getByText('本次会话', {exact:true}).count(), 0)
+  await page.getByRole('button', {name:'检测设置',exact:true}).click()
+  const telemetryToggle = page.getByRole('switch', {name:'共享匿名使用统计'})
+  await telemetryToggle.waitFor({state:'attached'})
+  await telemetryToggle.scrollIntoViewIfNeeded()
+  assert.deepEqual(errors, [])
+  assert.notEqual(await page.evaluate(() => navigator.globalPrivacyControl), true)
+  await page.waitForFunction(() => (
+    window.__PRIVACY_CONTROLLER__.getSnapshot().telemetry.availability !== 'checking'
+  ))
+  const telemetryInitialization = await page.evaluate(() => (
+    window.__PRIVACY_CONTROLLER__.getSnapshot().telemetry
+  ))
+  assert.deepEqual(telemetryInitialization, {
+    availability:'available', consent:false, lockedByGpc:false,
+  })
+  assert.equal(telemetryConfigRequests, 2, JSON.stringify(seenRequests))
+  assert.equal(await page.getByText('当前部署未配置统计服务', {exact:true}).count(), 0)
+  await page.waitForFunction(() => !document.querySelector('[role="switch"]')?.disabled)
+  assert.equal(await telemetryToggle.isChecked(), false)
+  assert.equal(await telemetryToggle.isEnabled(), true)
+  await telemetryToggle.check()
+  assert.equal(await telemetryToggle.isChecked(), true)
+  await page.screenshot({path:resolve(output,'settings-desktop.png'),fullPage:true})
   await page.getByRole('button', {name:'关闭隐私检测面板'}).click()
+  const activeTelemetry = page.waitForResponse(response => response.url().endsWith('/telemetry/events')
+    && JSON.parse(response.request().postData() ?? '{}').event === 'privacy_active')
+  const detectorTelemetry = page.waitForResponse(response => response.url().endsWith('/telemetry/events')
+    && JSON.parse(response.request().postData() ?? '{}').event === 'detector_used')
+  await page.getByRole('textbox', {name:'消息'}).fill('telemetry smoke')
+  await Promise.all([activeTelemetry, detectorTelemetry])
+  assert.equal(telemetryEvents.length, 2)
+  const activePayload = telemetryEvents.find(event => event.event === 'privacy_active')
+  const detectorPayload = telemetryEvents.find(event => event.event === 'detector_used')
+  assert.deepEqual(Object.keys(activePayload).sort(), ['daily_id','event','schema_version'])
+  assert.deepEqual(Object.keys(detectorPayload).sort(), ['daily_id','event','schema_version','value'])
+  assert.equal(activePayload.daily_id, detectorPayload.daily_id)
+  assert.equal(detectorPayload.value, 'regex')
   await page.setViewportSize({width:1280,height:900})
   await page.screenshot({path:resolve(output,'desktop.png'),fullPage:true})
   await page.setViewportSize({width:390,height:844})
@@ -106,8 +168,12 @@ try {
   assert.equal(await page.getByText('员工编号', {exact:true}).count(), 1)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   await page.screenshot({path:resolve(output,'mobile.png'),fullPage:true})
+  await page.getByRole('button', {name:'检测设置',exact:true}).click()
+  await page.getByRole('switch', {name:'共享匿名使用统计'}).locator('..').scrollIntoViewIfNeeded()
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+  await page.screenshot({path:resolve(output,'settings-mobile.png'),fullPage:true})
   assert.deepEqual(errors, [])
-  console.log(JSON.stringify({passed:true,checks:['merged session activity','custom rule editor','critical send review','per-finding choice','custom outbound redaction','original draft','original messages','copy','storage reload','mobile layout'],output}))
+  console.log(JSON.stringify({passed:true,checks:['merged session activity','custom rule editor','critical send review','per-finding choice','custom outbound redaction','original draft','original messages','copy','storage reload','telemetry opt-in','telemetry payload allowlist','mobile layout'],output}))
 } finally {
   await browser?.close()
   await new Promise(resolveClose => server.close(resolveClose))

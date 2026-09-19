@@ -113,10 +113,10 @@ export class PrivacyVault {
   restore(sessionId: string, text: string): string {
     const mappings = this.sessions.get(sessionId)
     if (mappings === undefined) return text
-    const partial = /ZCPII-[A-Z_]*(?:-[a-f0-9]{0,31})?$/u.exec(text)
+    const partial = /ZCPII-[A-Z][A-Z0-9_]*(?:-[a-f0-9]{0,31})?$/u.exec(text)
     const complete = partial !== null && [...mappings.keys()].some(token => token.startsWith(partial[0]))
       ? text.slice(0, partial.index) : text
-    return complete.replace(/ZCPII-[A-Z_]+-[a-f0-9]{32}/gu, token => mappings.get(token)?.original ?? token)
+    return complete.replace(/ZCPII-[A-Z][A-Z0-9_]*-[a-f0-9]{32}/gu, token => mappings.get(token)?.original ?? token)
   }
 
   async dispose(): Promise<void> {

@@ -21,6 +21,7 @@ export const inject = ['slots', 'locale', 'conversation']
 
 export function apply(ctx: ClientContext): void {
   const controller = new PrivacyController()
+  void controller.initializeTelemetry()
   ctx.effect(() => () => { void controller.dispose() }, 'zeroclave-privacy: controller')
   ctx.effect(() => installSendRedaction(ctx.conversation, controller), 'zeroclave-privacy: outgoing prompts')
   ctx.effect(() => installDisplayRestoration(ctx, controller.vault), 'zeroclave-privacy: original display')

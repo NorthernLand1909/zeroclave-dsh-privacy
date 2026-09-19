@@ -9,11 +9,12 @@ interface FindingCandidate {
   start: number
   end: number
   maskedEvidence: string
-  confidence: number
+  confidence?: number
   severity: Exclude<RiskLevel, 'none'>
   detector: DetectorMode
   ruleId?: string
   ruleName?: string
+  sourceType?: string
 }
 
 interface RegexRule {
@@ -47,7 +48,7 @@ const IP_ADDRESS = /(?:^|[^\d])((?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-
 const CREDIT_CARD = /(?:^|[^\d])((?:\d[ -]?){12,18}\d)(?!\d)/gu
 const IBAN = /\b([A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30})\b/giu
 const KYC = /\bKYC\b|客户资料|客戶資料|尽职调查|盡職調查/iu
-const PLACEHOLDER = /ZCPII-[A-Z_]+-[a-f0-9]{32}|__PII_[A-Z_]+_\d{8}__/gu
+const PLACEHOLDER = /ZCPII-[A-Z][A-Z0-9_]*-[a-f0-9]{32}|__PII_[A-Z][A-Z0-9_]*_\d{8}__/gu
 
 const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
@@ -300,13 +301,4 @@ export class RegexDetector implements DetectorProvider {
 
   available(): boolean { return true }
   scan(text: string): Promise<ScanResult> { return Promise.resolve(scanRegex(text)) }
-}
-
-export class ZeroClaveDetector implements DetectorProvider {
-  readonly id = 'zeroclave' as const
-  readonly label = 'ZeroClave API'
-  readonly locality = 'remote' as const
-
-  available(): boolean { return false }
-  scan(text: string): Promise<ScanResult> { return Promise.resolve(scanRegex(text, this.id)) }
 }

@@ -7,12 +7,15 @@ export type PrivacyKey =
   | 'brand' | 'active' | 'paused' | 'enable' | 'disable' | 'headerAction' | 'footerEnabled' | 'close' | 'sessionFallback'
   | 'tab.audit' | 'tab.rules' | 'tab.model'
   | 'dock.title' | 'dock.items' | 'dock.open' | 'dock.reminder' | 'dock.reviewReminder'
+  | 'dock.partial' | 'dock.partialReminder' | 'dock.checking' | 'dock.checkingReminder'
+  | 'dock.error' | 'dock.errorReminder'
   | 'risk.none' | 'risk.medium' | 'risk.high' | 'risk.critical'
   | 'action.allow' | 'action.redact' | 'action.block'
   | 'audit.input' | 'audit.pipeline' | 'audit.stage1' | 'audit.stage2'
   | 'audit.copyOriginal' | 'audit.copyRedacted'
   | 'audit.findings' | 'audit.empty' | 'audit.noFindings' | 'audit.json' | 'audit.copyJson'
-  | 'audit.policy' | 'audit.fallback'
+  | 'audit.policy' | 'audit.fallback' | 'audit.partial' | 'audit.partialNoFindings'
+  | 'audit.gatewayFinding' | 'audit.modelFinding'
   | 'source.regex' | 'source.embedded' | 'source.zeroclave' | 'source.regexFallback' | 'source.combined'
   | 'activity.title' | 'activity.sessionOnly' | 'activity.clear' | 'activity.sent'
   | 'activity.redacted' | 'activity.kept'
@@ -32,9 +35,13 @@ export type PrivacyKey =
   | 'rules.identity' | 'rules.organization' | 'rules.address' | 'rules.bank' | 'rules.kyc'
   | 'model.title' | 'model.desc' | 'model.regex' | 'model.regexDesc'
   | 'model.embedded' | 'model.embeddedDesc' | 'model.zeroclave' | 'model.zeroclaveDesc'
-  | 'model.running' | 'model.ready' | 'model.idle' | 'model.loading'
+  | 'model.running' | 'model.ready' | 'model.idle' | 'model.loading' | 'model.partial'
   | 'model.error' | 'model.unconfigured' | 'model.load' | 'model.retry'
+  | 'model.untested' | 'model.test' | 'model.testing' | 'model.testAgain'
+  | 'model.gatewayRoute' | 'model.gatewayNotice' | 'model.partialDetail' | 'model.requestId' | 'model.textOnly'
   | 'model.fallback' | 'model.limitation' | 'model.download'
+  | 'telemetry.title' | 'telemetry.summary' | 'telemetry.consent' | 'telemetry.on' | 'telemetry.off'
+  | 'telemetry.checking' | 'telemetry.unavailable' | 'telemetry.gpc' | 'telemetry.detail' | 'telemetry.network'
   | 'policy.title' | 'policy.desc' | 'policy.auto' | 'policy.autoDesc'
   | 'policy.review' | 'policy.reviewDesc'
   | 'review.title' | 'review.desc' | 'review.redact' | 'review.keep'
@@ -62,6 +69,12 @@ export const zh: Record<PrivacyKey, string> = {
   'dock.open': '查看详情',
   'dock.reminder': '发送时自动脱敏',
   'dock.reviewReminder': '严重项发送前确认',
+  'dock.partial': '检测结果不完整',
+  'dock.partialReminder': '不能据此判定其余原文安全，请查看详情',
+  'dock.checking': '正在进行 ZeroClave 检测',
+  'dock.checkingReminder': '检测完成前不会发送当前内容',
+  'dock.error': 'ZeroClave 检测失败',
+  'dock.errorReminder': '当前内容不能视为安全，发送会被阻止',
   'risk.none': '无风险',
   'risk.medium': '中风险',
   'risk.high': '高风险',
@@ -82,6 +95,10 @@ export const zh: Record<PrivacyKey, string> = {
   'audit.copyJson': '复制 JSON',
   'audit.policy': '策略信号',
   'audit.fallback': '所选后端尚不可用，本次结果来自正则回退',
+  'audit.partial': 'ZeroClave 检测未完整完成。当前实体可能只是部分结果，未标记内容不能视为安全；发送将被阻止。',
+  'audit.partialNoFindings': '未返回敏感实体，但检测不完整，不能判定当前草稿不含敏感信息。',
+  'audit.gatewayFinding': 'Gateway 检出',
+  'audit.modelFinding': '模型检出',
   'source.regex': '正则',
   'source.embedded': '内嵌 BERT',
   'source.zeroclave': 'ZeroClave',
@@ -147,18 +164,38 @@ export const zh: Record<PrivacyKey, string> = {
   'model.embedded': '内嵌 BERT',
   'model.embeddedDesc': 'gravitee-io/bert-small-pii-detection · 浏览器 WASM',
   'model.zeroclave': 'ZeroClave API',
-  'model.zeroclaveDesc': '远程隐私模型 Provider 接口预留',
+  'model.zeroclaveDesc': '匿名 Gateway 检测 · 经 DSH Host 同源代理',
   'model.running': '运行中',
   'model.ready': '已就绪',
   'model.idle': '未加载',
   'model.loading': '加载中',
-  'model.error': '加载失败',
+  'model.partial': '结果不完整',
+  'model.error': '当前不可用',
   'model.unconfigured': '未配置',
   'model.load': '加载模型',
   'model.retry': '重试加载',
-  'model.fallback': 'BERT 未就绪或 ZeroClave 未配置时，结果会明确回退到本地正则',
+  'model.untested': '未验证',
+  'model.test': '测试连接',
+  'model.testing': '正在测试',
+  'model.testAgain': '重新测试',
+  'model.gatewayRoute': '匿名接口，无需 API Key；请求由当前 DSH Host 转发',
+  'model.gatewayNotice': '数据边界：检测时原文会通过 HTTPS 发送至 ZeroClave Gateway，Gateway 可见原文；这不是客户端到 TEE 的端到端加密通道。',
+  'model.partialDetail': '服务返回了不完整结果。部分实体即使为空也不能视为安全，发送会保持阻止状态。',
+  'model.requestId': '请求 ID',
+  'model.textOnly': '当前只检测消息文本；图片和文件附件不在此检测范围内。',
+  'model.fallback': 'BERT 不可用时可明确回退到本地正则；ZeroClave 失败或结果不完整时不会视为安全，并会阻止发送。',
   'model.limitation': '该 BERT 主要面向英文；中文合同仍以正则结果为主',
   'model.download': '首次加载约下载 29 MB 量化模型，文件由浏览器缓存',
+  'telemetry.title': '帮助改进 ZeroClave',
+  'telemetry.summary': '可选匿名使用统计，默认关闭',
+  'telemetry.consent': '共享匿名使用统计',
+  'telemetry.on': '已同意',
+  'telemetry.off': '未开启',
+  'telemetry.checking': '正在检查服务',
+  'telemetry.unavailable': '当前部署未配置统计服务',
+  'telemetry.gpc': '浏览器的全局隐私控制（GPC）已关闭此选项',
+  'telemetry.detail': '仅发送每日随机 ID、插件版本和三类低粒度事件：使用隐私检测、成功保护发送、实际检测器。不会发送文本、命中内容、规则、会话、错误或请求 ID。日活表示每日活跃浏览器配置文件，不代表自然人数。',
+  'telemetry.network': '事件经当前 DSH Host 签名转发；Cloudflare 仍可能在网络层处理 Host 的出口连接元数据。在线明细在达到 48 小时后的首次小时清理中删除（少于 49 小时），D1 Time Travel 备份可能保留 7 或 30 天。',
   'policy.title': '发送策略',
   'policy.desc': '决定检测到严重风险时如何发送',
   'policy.auto': '自动脱敏',
@@ -201,6 +238,12 @@ export const en: Record<PrivacyKey, string> = {
   'dock.open': 'View details',
   'dock.reminder': 'Redacted automatically on send',
   'dock.reviewReminder': 'Critical findings reviewed before send',
+  'dock.partial': 'Detection is incomplete',
+  'dock.partialReminder': 'Unmarked text cannot be considered safe; open the details',
+  'dock.checking': 'ZeroClave detection in progress',
+  'dock.checkingReminder': 'This content will not be sent until detection completes',
+  'dock.error': 'ZeroClave detection failed',
+  'dock.errorReminder': 'This content cannot be treated as safe and sending will be blocked',
   'risk.none': 'No risk',
   'risk.medium': 'Medium risk',
   'risk.high': 'High risk',
@@ -221,6 +264,10 @@ export const en: Record<PrivacyKey, string> = {
   'audit.copyJson': 'Copy JSON',
   'audit.policy': 'Policy signal',
   'audit.fallback': 'The selected backend is unavailable; this result uses the regex fallback',
+  'audit.partial': 'ZeroClave did not complete detection. These may be only partial findings; unmarked content is not safe to assume and sending will be blocked.',
+  'audit.partialNoFindings': 'No entity was returned, but detection is incomplete and cannot establish that this draft contains no sensitive information.',
+  'audit.gatewayFinding': 'Gateway finding',
+  'audit.modelFinding': 'Model finding',
   'source.regex': 'Regex',
   'source.embedded': 'Embedded BERT',
   'source.zeroclave': 'ZeroClave',
@@ -286,18 +333,38 @@ export const en: Record<PrivacyKey, string> = {
   'model.embedded': 'Embedded BERT',
   'model.embeddedDesc': 'gravitee-io/bert-small-pii-detection · browser WASM',
   'model.zeroclave': 'ZeroClave API',
-  'model.zeroclaveDesc': 'Reserved remote privacy-model Provider',
+  'model.zeroclaveDesc': 'Anonymous Gateway detection · same-origin DSH Host proxy',
   'model.running': 'Running',
   'model.ready': 'Ready',
   'model.idle': 'Not loaded',
   'model.loading': 'Loading',
-  'model.error': 'Load failed',
+  'model.partial': 'Incomplete result',
+  'model.error': 'Unavailable',
   'model.unconfigured': 'Not configured',
   'model.load': 'Load model',
   'model.retry': 'Retry loading',
-  'model.fallback': 'Until BERT is ready or ZeroClave is configured, results explicitly fall back to local regex',
+  'model.untested': 'Not verified',
+  'model.test': 'Test connection',
+  'model.testing': 'Testing',
+  'model.testAgain': 'Test again',
+  'model.gatewayRoute': 'Anonymous endpoint with no API key; requests are forwarded by this DSH Host',
+  'model.gatewayNotice': 'Data boundary: detection sends the plaintext over HTTPS to the ZeroClave Gateway, where it is visible. This is not a client-to-TEE end-to-end encrypted channel.',
+  'model.partialDetail': 'The service returned an incomplete result. Even an empty entity list is not safe to assume, and sending remains blocked.',
+  'model.requestId': 'Request ID',
+  'model.textOnly': 'Only message text is checked; image and file attachments are outside this detector\'s scope.',
+  'model.fallback': 'Embedded BERT can explicitly fall back to local regex. A failed or partial ZeroClave result is never treated as safe and blocks sending.',
   'model.limitation': 'This BERT model is English-focused; regex remains primary for Chinese contracts',
   'model.download': 'First load downloads about 29 MB of quantized weights into the browser cache',
+  'telemetry.title': 'Help improve ZeroClave',
+  'telemetry.summary': 'Optional anonymous usage metrics, off by default',
+  'telemetry.consent': 'Share anonymous usage metrics',
+  'telemetry.on': 'Consent granted',
+  'telemetry.off': 'Not enabled',
+  'telemetry.checking': 'Checking service',
+  'telemetry.unavailable': 'Metrics are not configured for this deployment',
+  'telemetry.gpc': 'Your browser Global Privacy Control (GPC) has disabled this option',
+  'telemetry.detail': 'Sends only a daily random ID, plugin version, and three coarse events: privacy use, successful protected send, and actual detector. It never sends text, findings, rules, sessions, errors, or request IDs. Daily active usage counts browser profiles, not people.',
+  'telemetry.network': 'Events are signed and relayed by this DSH Host. Cloudflare may still process Host egress connection metadata at the network layer. Online detail is deleted by the first hourly cleanup after 48 hours (under 49 hours); D1 Time Travel backups may retain it for 7 or 30 days.',
   'policy.title': 'Send policy',
   'policy.desc': 'Choose what happens when critical risk is detected',
   'policy.auto': 'Automatic redaction',

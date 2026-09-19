@@ -50,6 +50,7 @@
     },
   });
   const controller = registrations[0].options.inject().controller;
+  window.__PRIVACY_CONTROLLER__ = controller;
   controller.setEnabled(true);
   const t = key => dictionaries.zh[key] ?? key;
   const bySlot = name => registrations.find(entry => entry.options.name === name).component;

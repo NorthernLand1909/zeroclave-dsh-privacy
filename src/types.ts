@@ -62,12 +62,13 @@ export interface PrivacyFinding {
   end: number
   maskedEvidence: string
   replacement: string
-  confidence: number
+  confidence?: number
   severity: Exclude<RiskLevel, 'none'>
   detector: DetectorMode
   ruleId?: string
   ruleName?: string
   action?: 'redacted' | 'kept'
+  sourceType?: string
 }
 
 export type SendPolicy = 'auto-redact' | 'review-critical'
@@ -95,15 +96,26 @@ export interface ScanResult {
     used: DetectorMode
     fallback: boolean
     model?: string
+    status?: 'complete' | 'partial'
+    requestId?: string
   }
 }
 
-export type DetectorLoadStatus = 'ready' | 'idle' | 'loading' | 'error' | 'unconfigured'
+export type DetectorLoadStatus = 'ready' | 'idle' | 'loading' | 'partial' | 'error' | 'unconfigured'
 
 export interface DetectorRuntimeState {
   status: DetectorLoadStatus
   progress?: number
   error?: string
+  code?: string
+  statusCode?: number
+  requestId?: string
+}
+
+export interface TelemetryRuntimeState {
+  consent: boolean
+  availability: 'checking' | 'available' | 'unavailable'
+  lockedByGpc: boolean
 }
 
 export interface DetectorProvider {
@@ -145,5 +157,6 @@ export interface PrivacySnapshot {
   regexRevision: number
   regexError?: RegexErrorCode | undefined
   sendPolicy: SendPolicy
+  telemetry: TelemetryRuntimeState
   pendingSendReview?: PendingSendReview
 }
