@@ -21,6 +21,7 @@ afterEach(() => {
 describe('built DSH client bundle', () => {
   it('loads through the DSH module handoff without a Node runtime dependency', async () => {
     const code = readFileSync(resolve('packages/experimental/zeroclave-privacy/lib/client.js'), 'utf8')
+    expect(code).toContain('data:image/png;base64,')
     let handoff: Handoff | undefined
     ;(window as LoaderWindow).__ModuleLoader__ = { load: (value) => { handoff = value } }
     // The fixture deliberately evaluates the emitted script in a browser-like global scope.

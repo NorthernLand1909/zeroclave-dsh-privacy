@@ -43,13 +43,17 @@ The target Gateway must publish the anonymous `POST /v1/pii/detect` route and en
 
 ## Optional product telemetry
 
-Telemetry is off by default and requires both user consent in **Detection
-settings** and an administrator-enabled Host relay. Global Privacy Control
-forces it off. Third-party installations without a provisioned Host credential
-do not send anything.
+Browser telemetry consent is off by default and must be enabled explicitly in
+**Detection settings**. Global Privacy Control forces it off. The marketplace
+bundle makes the Host relay capability available, but that relay sends nothing
+until the browser user opts in. Administrators can disable the capability with
+`telemetryEnabled: false`.
 
-The independently deployable Cloudflare Workers + D1 implementation lives in
-[`services/telemetry`](services/telemetry).
+Marketplace installations use Alibaba Cloud ESA as a narrow public ingress.
+ESA validates and rebuilds the allowlisted request, signs the request to the
+origin, and forwards it to a local Node.js receiver and SQLite on the ZeroClave
+ECS host. ESA is not the authoritative datastore. The official ZeroClave DSH
+deployment can instead use the local receiver directly over loopback with HMAC.
 
 The browser sends only a fresh 16-byte random identifier for the current UTC
 day, the plugin version, and one of three fixed events: a successful non-empty
@@ -58,32 +62,52 @@ used (`regex`, `embedded`, or `zeroclave`). Each event/value is delivered at
 most once per browser profile per day. It does not send message or redacted
 text, findings, entity types or counts, custom rules, session/account IDs,
 request IDs, errors, latency, URLs, locale, or device attributes. The resulting
-DAU is a count of active browser profiles, not people.
+DAU is an approximation based on unique daily random IDs, not people. Clearing
+browser storage or withdrawing and granting consent again can create another
+ID on the same day.
 
-The browser calls only the same-origin DSH Host. The Host validates and
-rebuilds a fixed payload, adds the trusted package version, and authenticates
-the request to the standalone telemetry Worker with HMAC. The key comes only
-from the environment variable named by `telemetrySecretEnv`; it is never a
-Cordis value or browser asset. Configure an official Host explicitly:
+The browser calls only the same-origin DSH Host. The Host strictly validates the
+browser payload, rebuilds the fixed allowlist, and adds the package version.
+Marketplace Hosts use anonymous HTTPS relay mode and contain no shared
+telemetry credential:
 
 ```yaml
 telemetryEnabled: true
+telemetryAuthMode: anonymous
 telemetryEndpoint: https://telemetry.zeroclave.ai
+telemetryTimeoutMs: 2000
+```
+
+Here `telemetryEnabled` means only that the consent control can be offered; it
+does not grant browser consent. For the official deployment, configure HMAC
+plus the loopback receiver explicitly:
+
+```yaml
+telemetryEnabled: true
+telemetryAuthMode: hmac
+telemetryEndpoint: http://127.0.0.1:8788
 telemetryKeyId: dsh-prod-1
 telemetrySecretEnv: ZEROCLAVE_TELEMETRY_HMAC_SECRET
 telemetryTimeoutMs: 2000
 ```
 
+The HMAC key comes only from the named environment variable; it is never a
+Cordis value, package file, or browser asset. Anonymous marketplace requests
+have no Host HMAC headers. ESA validates and rebuilds them before adding its
+own origin authentication.
+
 Telemetry is best-effort and never blocks detection, redaction, or sending.
 Withdrawing consent aborts pending browser delivery and clears its dedicated
-telemetry IndexedDB. The service stores only a keyed daily hash, not the raw
-daily identifier. Online event rows are deleted by the first hourly cleanup
-after they reach 48 hours (less than 49 hours), while aggregate counts contain
-no identifier. Cloudflare D1 Time Travel may still recover deleted database
-state for 7 days on Free or 30 days on Paid. Cloudflare also processes the
-Host's egress connection metadata at its network edge. A holder of a Host key
-can fabricate events, so these metrics are for product trends only, not
-billing, abuse decisions, or security policy.
+telemetry IndexedDB. The service stores only a metric-scoped keyed hash, not
+the raw daily identifier, in a volatile runtime database. Its internal deletion
+threshold is 47 hours with a 48-hour external limit; aggregate counts contain
+no identifier. The official Host sends over loopback. For marketplace Hosts,
+Alibaba Cloud ESA terminates TLS and processes the allowlisted event body and
+connection metadata while forwarding it; this design does not intentionally
+write either to ESA logs or storage, but provider-level handling remains
+governed by Alibaba Cloud's terms. The public ingress and open-source Host can
+be imitated, so events are forgeable. These metrics are approximate product
+trends only, never billing, abuse decisions, or security policy.
 
 ## Regex coverage
 
@@ -116,7 +140,16 @@ pnpm dsh plugin --profile web add ./packages/experimental/zeroclave-privacy
 pnpm dsh web --no-open
 ```
 
-For distribution, build first and create a tarball with `pnpm --filter @zeroclave/dsh-privacy pack`. The package manifest includes the DSH bundle patch and browser client artifact.
+For marketplace distribution, publish the prebuilt npm package or provide the
+prebuilt `npm pack`/`pnpm pack` tarball. Build first with the matching Harness
+checkout, then run `pnpm --filter @zeroclave/dsh-privacy pack`. The package
+manifest includes the DSH bundle patch and browser client artifact.
+
+Installing this repository directly from a GitHub source URL is not currently
+supported: the package has no self-contained `prepare` build, and its tsdown
+configuration intentionally resolves build helpers from a matching Harness
+monorepo checkout. Use the prebuilt package or tarball until that build is made
+self-contained.
 
 ## Security boundaries
 
@@ -132,7 +165,7 @@ For distribution, build first and create a tarball with `pnpm --filter @zeroclav
 - Display restoration is limited to visible message prose. Markdown destinations, code, attachment metadata, paths, identifiers, and tool payloads retain placeholders.
 - Old `__PII_*__` messages from releases through alpha.5 have no durable restoration map. Unknown placeholders are preserved; the plugin cannot reconstruct their originals.
 - ZeroClave requests are visible in the detection settings, expose connection errors, and use a longer draft debounce. Service failures and incomplete results block sending instead of being interpreted as no findings.
-- Product telemetry is separately opt-in, defaults off, respects GPC, and never contains draft text or detection results. Network-level metadata handled by Cloudflare is outside the event schema.
+- Product telemetry is separately opt-in, defaults off in the browser, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, but sends nothing without consent. Alibaba Cloud ESA processes the allowlisted event body and connection metadata while forwarding it, and public events can be fabricated, so metrics are approximate only.
 
 ## Known Limitations and Deferred Work
 

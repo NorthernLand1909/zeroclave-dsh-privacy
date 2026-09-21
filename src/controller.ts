@@ -143,6 +143,12 @@ export class PrivacyController {
     this.telemetryReporter.report(event, value)
   }
 
+  private reportScanTelemetry(texts: readonly string[], scanned: readonly ScanResult[]): void {
+    if (texts.some(text => text.length > 0)) this.reportTelemetry('privacy_active')
+    for (const detector of new Set(scanned.filter((_, index) => (texts[index]?.length ?? 0) > 0)
+      .map(result => result.detector.used))) this.reportTelemetry('detector_used', detector)
+  }
+
   setEnabled(enabled: boolean): void {
     if (!enabled) {
       this.cancelSendReview()
@@ -388,6 +394,10 @@ export class PrivacyController {
           })), signal)
           const partial = scanned.find(result => result.detector.status === 'partial')
           if (partial !== undefined) {
+            if (!signal.aborted && privacyEnabled(this.snapshot)
+              && this.snapshot.detectorMode === requested && this.snapshot.regexRevision === revision) {
+              this.reportScanTelemetry(texts, scanned)
+            }
             const partialError = new ZeroClaveDetectError(
               'partial_result', 'ZeroClave detection was incomplete; retry before sending', 200,
               partial.detector.requestId,
@@ -423,9 +433,7 @@ export class PrivacyController {
       signal.throwIfAborted()
       if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
         || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
-      if (texts.some(text => text.length > 0)) this.reportTelemetry('privacy_active')
-      for (const detector of new Set(scanned.filter((_, index) => (texts[index]?.length ?? 0) > 0)
-        .map(result => result.detector.used))) this.reportTelemetry('detector_used', detector)
+      this.reportScanTelemetry(texts, scanned)
       let decisions: Readonly<Record<string, boolean>> | undefined
       if (scanned.some(result => result.overallRisk === 'critical') && this.snapshot.sendPolicy === 'review-critical') {
         const parts = texts.map((text, index) => {

@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PrivacyController } from '../src/controller.ts'
+import type { TelemetryReporter } from '../src/telemetry.ts'
 import { PrivacyVault } from '../src/vault.ts'
 import { ZeroClaveDetector } from '../src/zeroclave-detector.ts'
 import { memoryStore } from './memory-store.ts'
@@ -47,6 +48,18 @@ function remote(fetchImpl: typeof fetch, retries = 0): ZeroClaveDetector {
     wait: () => Promise.resolve(),
     random: () => 0,
   })
+}
+
+function telemetryReporter(report: TelemetryReporter['report']): TelemetryReporter {
+  return {
+    consent: true,
+    lockedByGpc: false,
+    initialize: async () => 'available',
+    setConsent: consent => consent,
+    setConsentListener: () => undefined,
+    report,
+    dispose: async () => undefined,
+  }
 }
 
 afterEach(() => { localStorage.clear() })
@@ -96,6 +109,26 @@ describe('ZeroClave controller integration', () => {
       activeTab: 'model',
       detectorStates: { zeroclave: { status: 'partial' } },
     })
+  })
+
+  it('counts a direct partial scan as activity before blocking the send', async () => {
+    const report = vi.fn()
+    const controller = new PrivacyController(
+      new PrivacyVault(memoryStore()),
+      async () => [],
+      remote(async (_url, init) => response(init, ['partial'])),
+      telemetryReporter(report),
+    )
+    controller.setEnabled(true)
+    controller.setDetectorMode('zeroclave')
+
+    await expect(controller.prepareSend('session-1', 'Alice')).rejects.toMatchObject({
+      code: 'partial_result',
+    })
+    expect(report.mock.calls).toEqual([
+      ['privacy_active', undefined],
+      ['detector_used', 'zeroclave'],
+    ])
   })
 
   it('fails closed on a Gateway error and does not create a mapping', async () => {

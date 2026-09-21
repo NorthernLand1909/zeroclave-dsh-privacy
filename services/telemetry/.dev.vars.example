@@ -1,5 +1,0 @@
-INGEST_KEY_ID="local-dev"
-INGEST_HMAC_SECRET="replace-with-at-least-32-random-characters"
-DAILY_ID_HMAC_SECRET="replace-with-a-different-32-character-secret"
-CF_ACCESS_TEAM_DOMAIN="https://your-team.cloudflareaccess.com"
-CF_ACCESS_AUD="replace-with-access-application-aud-tag"

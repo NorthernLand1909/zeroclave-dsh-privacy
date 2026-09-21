@@ -34,6 +34,7 @@ export type PrivacyKey =
   | 'rules.title' | 'rules.desc' | 'rules.email' | 'rules.phone' | 'rules.apiKey'
   | 'rules.identity' | 'rules.organization' | 'rules.address' | 'rules.bank' | 'rules.kyc'
   | 'model.title' | 'model.desc' | 'model.regex' | 'model.regexDesc'
+  | 'model.engineTitle'
   | 'model.embedded' | 'model.embeddedDesc' | 'model.zeroclave' | 'model.zeroclaveDesc'
   | 'model.running' | 'model.ready' | 'model.idle' | 'model.loading' | 'model.partial'
   | 'model.error' | 'model.unconfigured' | 'model.load' | 'model.retry'
@@ -61,7 +62,7 @@ export const zh: Record<PrivacyKey, string> = {
   footerEnabled: '已启用',
   close: '关闭隐私检测面板',
   sessionFallback: 'DSH 会话',
-  'tab.audit': '检测',
+  'tab.audit': '隐私检测',
   'tab.rules': '正则规则',
   'tab.model': '检测设置',
   'dock.title': '发现敏感内容',
@@ -159,6 +160,7 @@ export const zh: Record<PrivacyKey, string> = {
   'rules.kyc': 'KYC / 客户资料上下文',
   'model.title': '检测设置',
   'model.desc': '配置发送策略和当前草稿使用的检测方式',
+  'model.engineTitle': '检测引擎',
   'model.regex': '本地正则',
   'model.regexDesc': '零下载，适合中文和结构化字段',
   'model.embedded': '内嵌 BERT',
@@ -194,8 +196,8 @@ export const zh: Record<PrivacyKey, string> = {
   'telemetry.checking': '正在检查服务',
   'telemetry.unavailable': '当前部署未配置统计服务',
   'telemetry.gpc': '浏览器的全局隐私控制（GPC）已关闭此选项',
-  'telemetry.detail': '仅发送每日随机 ID、插件版本和三类低粒度事件：使用隐私检测、成功保护发送、实际检测器。不会发送文本、命中内容、规则、会话、错误或请求 ID。日活表示每日活跃浏览器配置文件，不代表自然人数。',
-  'telemetry.network': '事件经当前 DSH Host 签名转发；Cloudflare 仍可能在网络层处理 Host 的出口连接元数据。在线明细在达到 48 小时后的首次小时清理中删除（少于 49 小时），D1 Time Travel 备份可能保留 7 或 30 天。',
+  'telemetry.detail': '仅发送每日随机 ID、插件版本和三类低粒度事件：使用隐私检测、成功保护发送、实际检测器。不会发送文本、命中内容、规则、会话、错误或请求 ID。日活是唯一每日随机 ID 数的近似指标，不代表自然人数。',
+  'telemetry.network': '事件经当前 DSH Host 严格校验并重建白名单字段。市场版通过 HTTPS 交给阿里云 ESA；ESA 会处理白名单事件和连接元数据，并为回源签名，但本方案不主动写入 ESA 日志或存储。官方部署可改用本机 HMAC 接收。事件可能被伪造，因此统计仅用于近似产品趋势。临时去重数据按 47 小时内部阈值清理，对外上限 48 小时；长期汇总不含标识符。',
   'policy.title': '发送策略',
   'policy.desc': '决定检测到严重风险时如何发送',
   'policy.auto': '自动脱敏',
@@ -230,7 +232,7 @@ export const en: Record<PrivacyKey, string> = {
   footerEnabled: 'Enabled',
   close: 'Close privacy detection panel',
   sessionFallback: 'DSH session',
-  'tab.audit': 'Detection',
+  'tab.audit': 'Privacy scan',
   'tab.rules': 'Rules',
   'tab.model': 'Settings',
   'dock.title': 'Sensitive content found',
@@ -328,6 +330,7 @@ export const en: Record<PrivacyKey, string> = {
   'rules.kyc': 'KYC / customer-data context',
   'model.title': 'Detection settings',
   'model.desc': 'Configure the send policy and how the current draft is checked',
+  'model.engineTitle': 'Detection engine',
   'model.regex': 'Local regex',
   'model.regexDesc': 'No download; tuned for Chinese structured fields',
   'model.embedded': 'Embedded BERT',
@@ -363,8 +366,8 @@ export const en: Record<PrivacyKey, string> = {
   'telemetry.checking': 'Checking service',
   'telemetry.unavailable': 'Metrics are not configured for this deployment',
   'telemetry.gpc': 'Your browser Global Privacy Control (GPC) has disabled this option',
-  'telemetry.detail': 'Sends only a daily random ID, plugin version, and three coarse events: privacy use, successful protected send, and actual detector. It never sends text, findings, rules, sessions, errors, or request IDs. Daily active usage counts browser profiles, not people.',
-  'telemetry.network': 'Events are signed and relayed by this DSH Host. Cloudflare may still process Host egress connection metadata at the network layer. Online detail is deleted by the first hourly cleanup after 48 hours (under 49 hours); D1 Time Travel backups may retain it for 7 or 30 days.',
+  'telemetry.detail': 'Sends only a daily random ID, plugin version, and three coarse events: privacy use, successful protected send, and actual detector. It never sends text, findings, rules, sessions, errors, or request IDs. Daily active usage is an approximation based on unique daily random IDs, not people.',
+  'telemetry.network': 'This DSH Host strictly validates and rebuilds the allowlisted fields. Marketplace installations send them over HTTPS to Alibaba Cloud ESA, which processes the allowlisted event and connection metadata and signs the origin request; this design does not intentionally write either to ESA logs or storage. Official deployments can use a local HMAC receiver instead. Events can be fabricated, so metrics are approximate product trends only. Temporary deduplication data uses a 47-hour internal deletion threshold and a 48-hour external limit; long-term aggregates contain no identifier.',
   'policy.title': 'Send policy',
   'policy.desc': 'Choose what happens when critical risk is detected',
   'policy.auto': 'Automatic redaction',

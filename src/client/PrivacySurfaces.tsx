@@ -1,7 +1,7 @@
-import { createElement, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
-import { ArrowLeft, Copy, Pencil, Plus, RotateCcw, Search, Trash2 } from 'lucide'
+import { ArrowLeft, Copy, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide'
 import type { IconNode as LucideNode } from 'lucide'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -16,6 +16,7 @@ import { DEFAULT_REGEX_RULES } from '../detector.ts'
 import { RULE_ENTITY_TYPES } from '../regex-rules.ts'
 import type { PrivacyKey } from './locales.ts'
 import css from './PrivacySurfaces.module.css'
+import zeroclaveLogo from './assets/zeroclave-logo.png'
 
 interface ControllerProps { controller: PrivacyController }
 
@@ -161,9 +162,61 @@ function CopyButton({ text, label }: { text: string; label: string }): ReactNode
         })
       }}
     >
-      {copied ? '✓' : '⧉'} {label}
+      {copied ? <span aria-hidden="true">✓</span> : <LucideIcon icon={Copy} size={13} />}
+      <span>{label}</span>
     </button>
   )
+}
+
+function SwitchControl({ checked, label, disabled = false, onChange }: {
+  checked: boolean
+  label: string
+  disabled?: boolean
+  onChange: (checked: boolean) => void
+}): ReactNode {
+  return (
+    <button
+      className={css.switchControl}
+      data-enabled={checked || undefined}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => { onChange(!checked) }}
+    >
+      <span aria-hidden="true"><i /></span>
+    </button>
+  )
+}
+
+function HighlightedText({ text, findings, t }: {
+  text: string
+  findings: readonly PrivacyFinding[]
+  t: PrivacyDrawerProps['t']
+}): ReactNode {
+  const ordered = [...findings]
+    .filter(finding => finding.start >= 0 && finding.end > finding.start && finding.end <= text.length)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+  const output: ReactNode[] = []
+  let cursor = 0
+  for (const finding of ordered) {
+    if (finding.start < cursor) continue
+    if (finding.start > cursor) output.push(text.slice(cursor, finding.start))
+    output.push(
+      <mark
+        className={css.sensitiveHighlight}
+        data-risk={finding.severity}
+        title={`${findingTypeLabel(finding, t)} · ${t(DETECTOR_KEYS[finding.detector])}`}
+        key={finding.id}
+      >
+        {text.slice(finding.start, finding.end)}
+      </mark>,
+    )
+    cursor = finding.end
+  }
+  if (cursor < text.length) output.push(text.slice(cursor))
+  return <>{output}</>
 }
 
 export function HeaderButton({ controller, t }: HeaderButtonProps): ReactNode {
@@ -327,7 +380,7 @@ function AuditView({
             <strong>{t('audit.stage1')}</strong>
             <CopyButton text={live.text} label={t('audit.copyOriginal')} />
           </div>
-          <p>{live.text || '—'}</p>
+          <p>{live.text === '' ? '—' : <HighlightedText text={live.text} findings={live.result.findings} t={t} />}</p>
         </div>
         <div className={css.stage} data-stage="redacted">
           <div className={css.stageHeading}>
@@ -565,18 +618,26 @@ function RulesView({ controller, snapshot, t }: {
 }): ReactNode {
   const [editing, setEditing] = useState<EditableRegexRule>()
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'builtin' | 'custom'>('all')
+  const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled' | 'custom'>('all')
+  const surfaceRef = useRef<HTMLDivElement>(null)
   const defaults = new Map(DEFAULT_REGEX_RULES.map(rule => [rule.id, rule]))
   const visible = snapshot.regexRules.filter((rule) => {
-    const builtin = defaults.has(rule.id)
-    return (filter === 'all' || (filter === 'builtin') === builtin)
+    const custom = !defaults.has(rule.id)
+    return (filter === 'all' || (filter === 'enabled' && rule.enabled)
+      || (filter === 'disabled' && !rule.enabled) || (filter === 'custom' && custom))
       && `${rule.name} ${rule.pattern} ${rule.entityType}`.toLowerCase().includes(query.trim().toLowerCase())
   })
+  useEffect(() => {
+    const scrollContainer = surfaceRef.current?.closest<HTMLElement>('[data-zero-privacy-scroll]')
+    if (scrollContainer !== undefined && scrollContainer !== null) scrollContainer.scrollTop = 0
+  }, [editing])
   if (editing !== undefined) return (
-    <RuleEditor controller={controller} original={editing} t={t} onClose={() => { setEditing(undefined) }} />
+    <div className={css.ruleSurface} ref={surfaceRef}>
+      <RuleEditor controller={controller} original={editing} t={t} onClose={() => { setEditing(undefined) }} />
+    </div>
   )
   return (
-    <div className={css.tabPage}>
+    <div className={css.tabPage} ref={surfaceRef}>
       <div className={css.rulesHeading}><div><h3>{t('rules.title')}</h3><p>{t('rules.desc')}</p></div>
         <button className={css.primaryButton} type="button" onClick={() => { setEditing(emptyRule()) }}>
           <LucideIcon icon={Plus} /> {t('rules.add')}
@@ -586,7 +647,8 @@ function RulesView({ controller, snapshot, t }: {
         <label className={css.searchBox}><LucideIcon icon={Search} /><input aria-label={t('rules.search')} placeholder={t('rules.search')}
           value={query} onChange={(event) => { setQuery(event.target.value) }} /></label>
         <select aria-label={t('rules.filter')} value={filter} onChange={(event) => { setFilter(event.target.value as typeof filter) }}>
-          <option value="all">{t('rules.all')}</option><option value="builtin">{t('rules.builtin')}</option><option value="custom">{t('rules.custom')}</option>
+          <option value="all">{t('rules.all')}</option><option value="enabled">{t('rules.enabledOnly')}</option>
+          <option value="disabled">{t('rules.disabledOnly')}</option><option value="custom">{t('rules.custom')}</option>
         </select>
       </div>
       <div className={css.ruleRows}>{visible.map((rule) => {
@@ -594,8 +656,9 @@ function RulesView({ controller, snapshot, t }: {
         const changed = defaultRule !== undefined && JSON.stringify(defaultRule) !== JSON.stringify(rule)
         const displayName = ruleDisplayName(rule.id, rule.entityType, rule.name, t)
         return <article className={css.ruleCard} key={rule.id} data-enabled={rule.enabled || undefined}>
-          <label className={css.ruleToggle}><input type="checkbox" checked={rule.enabled}
-            onChange={(event) => { controller.saveRule({ ...rule, enabled: event.target.checked }) }} /><span /></label>
+          <SwitchControl checked={rule.enabled}
+            label={`${displayName}: ${rule.enabled ? t('rules.enabled') : t('rules.disabledOnly')}`}
+            onChange={(enabled) => { controller.saveRule({ ...rule, enabled }) }} />
           <button className={css.ruleBody} type="button" onClick={() => { setEditing(rule) }}>
             <strong>{displayName}</strong><code>/{rule.pattern}/{rule.flags}</code>
             <small>{defaultRule === undefined ? t('rules.custom') : t('rules.builtin')} · {t(ENTITY_KEYS[rule.entityType])}</small>
@@ -718,6 +781,7 @@ function ModelView({ controller, snapshot, t }: {
   }
   const embeddedState = snapshot.detectorStates.embedded
   const zeroClaveState = snapshot.detectorStates.zeroclave
+  const showTelemetry = snapshot.telemetry.availability === 'available' || snapshot.telemetry.consent
   return (
     <div className={css.tabPage}>
       <h3>{t('model.title')}</h3>
@@ -736,26 +800,29 @@ function ModelView({ controller, snapshot, t }: {
           ))}
         </div>
       </section>
-      <div className={css.modelRows}>
-        {rows.map(([mode, title, description]) => (
-          <button
-            className={css.modelRow}
-            data-selected={snapshot.detectorMode === mode || undefined}
-            key={mode}
-            type="button"
-            onClick={() => { controller.setDetectorMode(mode) }}
-          >
-            <span className={css.radioMark} />
-            <span><strong>{t(title)}</strong><small>{t(description)}</small></span>
-            <em>
-              {t(statusKey(mode))}
-              {mode === 'embedded' && embeddedState.status === 'loading' && embeddedState.progress !== undefined
-                ? ` ${Math.round(embeddedState.progress)}%`
-                : ''}
-            </em>
-          </button>
-        ))}
-      </div>
+      <section className={css.engineSection}>
+        <h4>{t('model.engineTitle')}</h4>
+        <div className={css.modelRows}>
+          {rows.map(([mode, title, description]) => (
+            <button
+              className={css.modelRow}
+              data-selected={snapshot.detectorMode === mode || undefined}
+              key={mode}
+              type="button"
+              onClick={() => { controller.setDetectorMode(mode) }}
+            >
+              <span className={css.radioMark} />
+              <span><strong>{t(title)}</strong><small>{t(description)}</small></span>
+              <em>
+                {t(statusKey(mode))}
+                {mode === 'embedded' && embeddedState.status === 'loading' && embeddedState.progress !== undefined
+                  ? ` ${Math.round(embeddedState.progress)}%`
+                  : ''}
+              </em>
+            </button>
+          ))}
+        </div>
+      </section>
       {snapshot.detectorMode === 'embedded' ? (
         <div className={css.modelActions}>
           <button
@@ -807,7 +874,7 @@ function ModelView({ controller, snapshot, t }: {
       {snapshot.detectorMode === 'embedded'
         ? <p className={css.modelNote}>{t('model.limitation')}</p>
         : null}
-      <section className={css.telemetrySection}>
+      {showTelemetry ? <section className={css.telemetrySection}>
         <div className={css.telemetryHeading}>
           <div><strong>{t('telemetry.title')}</strong><small>{t('telemetry.summary')}</small></div>
         </div>
@@ -815,16 +882,13 @@ function ModelView({ controller, snapshot, t }: {
         <p>{snapshot.telemetry.lockedByGpc ? t('telemetry.gpc') : t('telemetry.network')}</p>
         <div className={css.telemetryControl}>
           <strong className={css.telemetryConsent}>{t('telemetry.consent')}</strong>
-          <label className={css.telemetryToggle} data-enabled={snapshot.telemetry.consent || undefined}>
-            <input
-              type="checkbox"
-              role="switch"
-              aria-label={t('telemetry.consent')}
+          <div className={css.telemetryToggle}>
+            <SwitchControl
               checked={snapshot.telemetry.consent}
+              label={t('telemetry.consent')}
               disabled={snapshot.telemetry.availability !== 'available' || snapshot.telemetry.lockedByGpc}
-              onChange={(event) => { controller.setTelemetryConsent(event.target.checked) }}
+              onChange={(consent) => { controller.setTelemetryConsent(consent) }}
             />
-            <span aria-hidden="true"><i /></span>
             <em>{snapshot.telemetry.availability === 'checking'
               ? t('telemetry.checking')
               : snapshot.telemetry.lockedByGpc
@@ -832,46 +896,46 @@ function ModelView({ controller, snapshot, t }: {
                 : snapshot.telemetry.availability === 'unavailable'
                   ? t('telemetry.unavailable')
                   : snapshot.telemetry.consent ? t('telemetry.on') : t('telemetry.off')}</em>
-          </label>
+          </div>
         </div>
-      </section>
+      </section> : null}
     </div>
   )
 }
 
 export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps): ReactNode {
   const snapshot = usePrivacy(controller)
+  const drawerBodyRef = useRef<HTMLDivElement>(null)
   const sessionId = useSessions(state => state.current)
   const live = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
   const records = sessionId === undefined ? [] : snapshot.sendRecordsBySession.get(sessionId) ?? []
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
     ['audit', 'tab.audit'],
-    ['rules', 'tab.rules'],
     ['model', 'tab.model'],
+    ['rules', 'tab.rules'],
   ]
+  useEffect(() => {
+    if (drawerBodyRef.current !== null) drawerBodyRef.current.scrollTop = 0
+  }, [snapshot.activeTab, snapshot.pendingSendReview?.id])
   if (!snapshot.open) return null
 
   return (
     <aside className={css.drawer} data-zero-privacy-drawer="open"
       data-review={snapshot.pendingSendReview === undefined ? undefined : 'send'}>
       <header className={css.drawerHeader}>
-        <span className={css.brandIcon}><ShieldIcon size={20} /></span>
-        <div><strong>{t('brand')}</strong><small>{sessionId ?? t('sessionFallback')}</small></div>
-        <button
-          className={css.toggleButton}
-          data-enabled={snapshot.enabled || undefined}
-          type="button"
-          aria-label={snapshot.enabled ? t('disable') : t('enable')}
-          aria-pressed={snapshot.enabled}
-          onClick={() => { controller.setEnabled(!snapshot.enabled) }}
-        >
-          <i />
-          {snapshot.enabled ? t('active') : t('paused')}
-        </button>
+        <div className={css.brandIdentity}>
+          <img className={css.brandLogo} src={zeroclaveLogo} alt={t('brand')} />
+          <small>{sessionId ?? t('sessionFallback')}</small>
+        </div>
+        <div className={css.headerStatus}>
+          <span data-enabled={snapshot.enabled || undefined}>{snapshot.enabled ? t('active') : t('paused')}</span>
+          <SwitchControl checked={snapshot.enabled} label={snapshot.enabled ? t('disable') : t('enable')}
+            onChange={(enabled) => { controller.setEnabled(enabled) }} />
+        </div>
         <button className={css.iconButton} type="button" aria-label={t('close')} onClick={() => {
           if (snapshot.pendingSendReview !== undefined) controller.cancelSendReview()
           controller.setOpen(false)
-        }}>×</button>
+        }}><LucideIcon icon={X} size={18} /></button>
       </header>
       {snapshot.pendingSendReview === undefined ? <nav className={css.tabs}>
         {tabs.map(([id, label]) => (
@@ -885,7 +949,7 @@ export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps
           </button>
         ))}
       </nav> : null}
-      <div className={css.drawerBody}>
+      <div className={css.drawerBody} data-zero-privacy-scroll ref={drawerBodyRef}>
         {snapshot.pendingSendReview !== undefined ? (
           <SendReviewView controller={controller} review={snapshot.pendingSendReview} t={t} />
         ) : null}

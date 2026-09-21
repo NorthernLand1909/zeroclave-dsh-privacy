@@ -27,13 +27,15 @@ const routes = new Map([
   ['/react-dom.js', [resolve(reactDomRoot, 'umd/react-dom.development.js'), 'text/javascript']],
 ])
 const telemetryEvents = []
+const telemetryEnabled = process.env.ZEROCLAVE_PRIVACY_PREVIEW !== '1'
 let telemetryConfigRequests = 0
 const seenRequests = []
 const server = createServer(async (request, response) => {
   seenRequests.push(`${request.method} ${request.url}`)
   if (request.url === '/api/zeroclave-privacy/telemetry/config' && request.method === 'GET') {
     telemetryConfigRequests += 1
-    response.writeHead(200, {'cache-control':'no-store','content-type':'application/json'}).end('{"enabled":true}')
+    response.writeHead(200, {'cache-control':'no-store','content-type':'application/json'})
+      .end(JSON.stringify({enabled:telemetryEnabled}))
     return
   }
   if (request.url === '/api/zeroclave-privacy/telemetry/events' && request.method === 'POST') {
@@ -72,7 +74,8 @@ try {
   const secret = 'abcdefghijklmnopqrstuvwx'
   const original = `采购框架协议\n合同编号：TEST-2026-001\n甲方（买方）：示例采购有限公司\n通讯地址：深圳市示例路100号\n邮箱：demo@example.com\napi_key=${secret}`
   await page.goto(url)
-  await page.getByRole('button', {name:'隐私检测',exact:true}).click()
+  await page.getByRole('main').getByRole('button', {name:'隐私检测',exact:true}).click()
+  await page.getByRole('img', {name:'ZeroClave 隐私防火墙',exact:true}).waitFor()
   await page.getByRole('button', {name:'正则规则',exact:true}).click()
   await page.getByRole('button', {name:'新增规则',exact:true}).click()
   await page.getByText('规则名称', {exact:true}).locator('..').getByRole('textbox').fill('员工编号')
@@ -81,8 +84,11 @@ try {
   await page.getByText('测试文本', {exact:true}).locator('..').getByRole('textbox').fill('员工编号：EMP-2048')
   await page.getByRole('button', {name:'测试匹配',exact:true}).click()
   await page.getByText('1 处匹配', {exact:true}).waitFor()
+  await page.locator('[data-zero-privacy-scroll]').evaluate(element => { element.scrollTop = 0 })
+  await page.screenshot({path:resolve(output,'rule-editor-desktop.png'),fullPage:true})
   await page.getByRole('button', {name:'保存规则',exact:true}).click()
   await page.getByText('员工编号', {exact:true}).waitFor()
+  await page.screenshot({path:resolve(output,'rules-desktop.png'),fullPage:true})
   await page.getByRole('button', {name:'关闭隐私检测面板'}).click()
   const input = `${original}\n员工编号：EMP-2048`
   await page.getByRole('textbox', {name:'消息'}).fill(input)
@@ -90,7 +96,7 @@ try {
   assert.equal(await page.getByRole('textbox', {name:'消息'}).inputValue(), input)
   assert.equal(await page.getByRole('button', {name:'使用脱敏文本'}).count(), 0)
   await page.getByRole('button', {name:'查看详情',exact:true}).click()
-  await page.getByRole('button', {name:'检测',exact:true}).click()
+  await page.getByRole('navigation').getByRole('button', {name:'隐私检测',exact:true}).click()
   await page.getByText('检测详情', {exact:true}).waitFor()
   await page.screenshot({path:resolve(output,'current-detection-desktop.png'),fullPage:true})
   await page.getByRole('button', {name:'关闭隐私检测面板'}).click()
@@ -110,7 +116,7 @@ try {
   assert.ok(outgoing.includes(secret))
   assert.ok(!outgoing.includes('demo@example.com') && !outgoing.includes('示例采购有限公司') && !outgoing.includes('EMP-2048'))
   assert.equal(await page.locator('[data-testid="message"] pre').first().textContent(), input)
-  await page.getByRole('button', {name:'检测',exact:true}).click()
+  await page.getByRole('navigation').getByRole('button', {name:'隐私检测',exact:true}).click()
   await page.getByText('本次会话', {exact:true}).waitFor()
   await page.getByText('已处理并发送', {exact:true}).waitFor()
   assert.equal(await page.getByRole('button', {name:'检测历史',exact:true}).count(), 0)
@@ -121,7 +127,7 @@ try {
   await page.waitForTimeout(500)
   await page.waitForFunction(() => document.querySelectorAll('[data-testid="message"]')[1]?.textContent.includes('demo@example.com'))
   assert.equal(await page.locator('[data-testid="message"] pre').first().textContent(), input)
-  await page.getByRole('button', {name:'隐私检测',exact:true}).click()
+  await page.getByRole('main').getByRole('button', {name:'隐私检测',exact:true}).click()
   assert.equal(await page.getByText('本次会话', {exact:true}).count(), 0)
   await page.getByRole('button', {name:'检测设置',exact:true}).click()
   const telemetryToggle = page.getByRole('switch', {name:'共享匿名使用统计'})
@@ -141,10 +147,10 @@ try {
   assert.equal(telemetryConfigRequests, 2, JSON.stringify(seenRequests))
   assert.equal(await page.getByText('当前部署未配置统计服务', {exact:true}).count(), 0)
   await page.waitForFunction(() => !document.querySelector('[role="switch"]')?.disabled)
-  assert.equal(await telemetryToggle.isChecked(), false)
+  assert.equal(await telemetryToggle.getAttribute('aria-checked'), 'false')
   assert.equal(await telemetryToggle.isEnabled(), true)
-  await telemetryToggle.check()
-  assert.equal(await telemetryToggle.isChecked(), true)
+  await telemetryToggle.click()
+  assert.equal(await telemetryToggle.getAttribute('aria-checked'), 'true')
   await page.screenshot({path:resolve(output,'settings-desktop.png'),fullPage:true})
   await page.getByRole('button', {name:'关闭隐私检测面板'}).click()
   const activeTelemetry = page.waitForResponse(response => response.url().endsWith('/telemetry/events')
@@ -163,7 +169,7 @@ try {
   await page.setViewportSize({width:1280,height:900})
   await page.screenshot({path:resolve(output,'desktop.png'),fullPage:true})
   await page.setViewportSize({width:390,height:844})
-  await page.getByRole('button', {name:'隐私检测',exact:true}).click()
+  await page.getByRole('main').getByRole('button', {name:'隐私检测',exact:true}).click()
   await page.getByRole('button', {name:'正则规则',exact:true}).click()
   assert.equal(await page.getByText('员工编号', {exact:true}).count(), 1)
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)

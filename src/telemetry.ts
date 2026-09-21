@@ -293,7 +293,6 @@ export class PrivacyTelemetry implements TelemetryReporter {
     if (this.lockedByGpc) {
       this.consentOverride = false
       this.cancelAndClear()
-      return 'unavailable'
     }
     const combined = AbortSignal.any([
       this.lifetime.signal, ...(signal === undefined ? [] : [signal]), AbortSignal.timeout(2_000),
@@ -307,6 +306,10 @@ export class PrivacyTelemetry implements TelemetryReporter {
         && !Array.isArray(body) && (body as { enabled?: unknown }).enabled === true
     } catch {
       this.available = false
+    }
+    if (this.lockedByGpc) {
+      this.consentOverride = false
+      this.cancelAndClear()
     }
     return this.available ? 'available' : 'unavailable'
   }

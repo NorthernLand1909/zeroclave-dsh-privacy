@@ -5,6 +5,8 @@ export const TELEMETRY_CONFIG_PATH = '/api/zeroclave-privacy/telemetry/config'
 export const TELEMETRY_EVENTS_PATH = '/api/zeroclave-privacy/telemetry/events'
 export const MAX_TELEMETRY_BODY_BYTES = 512
 
+export type TelemetryAuthMode = 'anonymous' | 'hmac'
+
 const DAILY_ID = /^[A-Za-z0-9_-]{22}$/u
 const KEY_ID = /^[A-Za-z0-9_.-]{1,64}$/u
 const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u
@@ -13,6 +15,7 @@ const EVENTS = new Set(['privacy_active', 'protected_send', 'detector_used'])
 
 export interface TelemetryProxyConfig {
   enabled: boolean
+  authMode: TelemetryAuthMode
   endpoint: string
   keyId: string
   secret: string | undefined
@@ -43,15 +46,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isLoopback(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+  return hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
-function telemetryURL(value: string): string {
+function telemetryURL(value: string, authMode: TelemetryAuthMode): string {
   const url = new URL(value)
-  if (url.protocol !== 'https:' && (url.protocol !== 'http:' || !isLoopback(url.hostname))) {
-    throw new Error('Telemetry endpoint must use HTTPS unless it targets loopback')
+  const hasQuery = url.href.includes('?')
+  const hasFragment = url.href.includes('#')
+  const hmacLoopback = authMode === 'hmac' && url.protocol === 'http:' && isLoopback(url.hostname)
+  if (url.protocol !== 'https:' && !hmacLoopback) {
+    throw new Error('Telemetry endpoint must use HTTPS unless HMAC targets loopback')
   }
-  if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+  if (url.username !== '' || url.password !== '' || hasQuery || hasFragment) {
     throw new Error('Telemetry endpoint must not contain credentials, query parameters, or a fragment')
   }
   const path = url.pathname.replace(/\/+$/u, '')
@@ -138,16 +144,28 @@ export function createTelemetryHandlers(
   config: TelemetryProxyConfig,
   internals: TelemetryProxyInternals = { fetch, now: Date.now, randomBytes },
 ): {
+  active: boolean
   config: (req: IncomingMessage, res: ServerResponse) => void
   events: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 } {
   const secret = config.secret
-  const destination = config.enabled && secret !== undefined && secret.length >= 32 && KEY_ID.test(config.keyId)
-    ? { endpoint: telemetryURL(config.endpoint), secret }
-    : undefined
+  let endpoint: string | undefined
+  if (config.enabled && (config.authMode === 'anonymous' || config.authMode === 'hmac')
+    && VERSION.test(config.pluginVersion)) {
+    try { endpoint = telemetryURL(config.endpoint, config.authMode) } catch { endpoint = undefined }
+  }
+  const destination = endpoint === undefined
+    ? undefined
+    : config.authMode === 'anonymous'
+      ? { authMode: config.authMode, endpoint }
+      : secret !== undefined && secret.length >= 32 && !secret.startsWith('replace-with-')
+        && KEY_ID.test(config.keyId)
+        ? { authMode: config.authMode, endpoint, secret }
+        : undefined
   const active = destination !== undefined
 
   return {
+    active,
     config: (req, res) => {
       req.resume()
       if (req.method !== 'GET') {
@@ -198,15 +216,17 @@ export function createTelemetryHandlers(
         plugin_version: config.pluginVersion,
         ...(event.event === 'detector_used' ? { value: event.value } : {}),
       })
-      if (!VERSION.test(config.pluginVersion)) {
-        sendJSON(res, 503, { error: { code: 'telemetry_unavailable', message: 'Telemetry is unavailable' } })
-        return
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      if (destination.authMode === 'hmac') {
+        const timestamp = String(Math.floor(internals.now() / 1_000))
+        const nonce = internals.randomBytes(16).toString('base64url')
+        const bodyHash = createHash('sha256').update(outbound).digest('hex')
+        const canonical = `v1\nPOST\n/v1/events\n${timestamp}\n${nonce}\n${bodyHash}`
+        headers['x-zc-key-id'] = config.keyId
+        headers['x-zc-timestamp'] = timestamp
+        headers['x-zc-nonce'] = nonce
+        headers['x-zc-signature'] = createHmac('sha256', destination.secret).update(canonical).digest('hex')
       }
-      const timestamp = String(Math.floor(internals.now() / 1_000))
-      const nonce = internals.randomBytes(16).toString('base64url')
-      const bodyHash = createHash('sha256').update(outbound).digest('hex')
-      const canonical = `v1\nPOST\n/v1/events\n${timestamp}\n${nonce}\n${bodyHash}`
-      const signature = createHmac('sha256', destination.secret).update(canonical).digest('hex')
       const controller = new AbortController()
       let timedOut = false
       let disconnected = false
@@ -221,13 +241,7 @@ export function createTelemetryHandlers(
         const response = await internals.fetch(destination.endpoint, {
           method: 'POST',
           redirect: 'manual',
-          headers: {
-            'content-type': 'application/json',
-            'x-zc-key-id': config.keyId,
-            'x-zc-timestamp': timestamp,
-            'x-zc-nonce': nonce,
-            'x-zc-signature': signature,
-          },
+          headers,
           body: outbound,
           signal: controller.signal,
         })

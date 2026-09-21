@@ -4,8 +4,7 @@
       config:
         gatewayBaseURL: https://zeroclave.com/v1
         timeoutMs: 15000
-        telemetryEnabled: false
+        telemetryEnabled: true
+        telemetryAuthMode: anonymous
         telemetryEndpoint: https://telemetry.zeroclave.ai
-        telemetryKeyId: dsh-prod-1
-        telemetrySecretEnv: ZEROCLAVE_TELEMETRY_HMAC_SECRET
         telemetryTimeoutMs: 2000

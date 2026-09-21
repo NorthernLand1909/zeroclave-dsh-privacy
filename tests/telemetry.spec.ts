@@ -174,9 +174,10 @@ describe('privacy-preserving telemetry reporter', () => {
     const fetchMock = enabledFetch()
     const telemetry = makeTelemetry(store, fetchMock)
 
-    await telemetry.initialize()
+    await expect(telemetry.initialize()).resolves.toBe('available')
 
     expect(telemetry.lockedByGpc).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(CONFIG_PATH, expect.objectContaining({ method: 'GET' }))
     expect(telemetry.setConsent(true)).toBe(false)
     telemetry.report('privacy_active')
     await vi.waitFor(() => { expect(store.clearCount).toBeGreaterThan(0) })
