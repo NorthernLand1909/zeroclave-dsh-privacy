@@ -308,6 +308,7 @@ export class ZeroClaveDetector implements DetectorProvider {
 
   async scanBatch(inputs: readonly ZeroClaveDetectInput[], signal?: AbortSignal): Promise<ScanResult[]> {
     const boundaries = validateInputs(inputs)
+    const fetchImpl = this.internals.fetch
     const callerSignal = signal ?? new AbortController().signal
     callerSignal.throwIfAborted()
     const requestId = `dsh-${randomUUID()}`
@@ -321,7 +322,7 @@ export class ZeroClaveDetector implements DetectorProvider {
       if (remaining <= 0) break
       const timeout = AbortSignal.timeout(Math.max(1, Math.min(this.timeoutMs, remaining)))
       try {
-        response = await this.internals.fetch(this.endpoint, {
+        response = await fetchImpl(this.endpoint, {
           method: 'POST',
           ...(this.endpoint.startsWith('/') ? {} : { mode: 'cors' as const }),
           credentials: this.endpoint.startsWith('/') ? 'same-origin' : 'omit',

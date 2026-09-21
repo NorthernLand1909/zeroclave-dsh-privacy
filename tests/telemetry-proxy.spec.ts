@@ -131,7 +131,7 @@ describe('telemetry Host proxy', () => {
       authMode: 'anonymous',
       keyId: 'not valid',
       secret: undefined,
-      pluginVersion: '0.1.0-alpha.14',
+      pluginVersion: '0.1.0-alpha.15',
     }), { fetch: upstream, now, randomBytes: random })
 
     expect(handlers.active).toBe(true)
@@ -161,7 +161,7 @@ describe('telemetry Host proxy', () => {
       product: 'zeroclave-dsh-privacy',
       event: 'detector_used',
       daily_id: 'AAAAAAAAAAAAAAAAAAAAAA',
-      plugin_version: '0.1.0-alpha.14',
+      plugin_version: '0.1.0-alpha.15',
       value: 'regex',
     }))
     expect([...new Headers(init?.headers).entries()]).toEqual([

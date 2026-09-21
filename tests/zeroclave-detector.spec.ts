@@ -66,6 +66,18 @@ function createDetector(
 }
 
 describe('ZeroClave anonymous detector contract', () => {
+  it('invokes fetch without rebinding its receiver', async () => {
+    const receivers: unknown[] = []
+    const fetchImplementation: FetchImplementation = async function (this: unknown, _url, init) {
+      receivers.push(this)
+      return successResponse(init, [result()])
+    }
+    const detector = createDetector(fetchImplementation)
+
+    await expect(detector.scanBatch([input()])).resolves.toHaveLength(1)
+    expect(receivers).toEqual([undefined])
+  })
+
   it('accepts a complete empty result without treating it as a transport fallback', async () => {
     const fetchMock = vi.fn<FetchImplementation>(async (_url, init) => (
       successResponse(init, [result()])

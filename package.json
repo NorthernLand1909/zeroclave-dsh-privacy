@@ -1,6 +1,6 @@
 {
   "name": "@zeroclave/dsh-privacy",
-  "version": "0.1.0-alpha.14",
+  "version": "0.1.0-alpha.15",
   "description": "ZeroClave privacy firewall for DeepSeek Harness",
   "type": "module",
   "engines": {

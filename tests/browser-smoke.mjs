@@ -29,9 +29,27 @@ const routes = new Map([
 const telemetryEvents = []
 const telemetryEnabled = process.env.ZEROCLAVE_PRIVACY_PREVIEW !== '1'
 let telemetryConfigRequests = 0
+let zeroClaveRequests = 0
 const seenRequests = []
 const server = createServer(async (request, response) => {
   seenRequests.push(`${request.method} ${request.url}`)
+  if (request.url === '/api/zeroclave-privacy/detect' && request.method === 'POST') {
+    const chunks = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    const requestId = request.headers['x-request-id']
+    zeroClaveRequests += 1
+    response.writeHead(200, {
+      'cache-control':'no-store', 'content-type':'application/json', 'x-request-id':requestId,
+    }).end(JSON.stringify({
+      request_id:requestId,
+      model_version:'browser-smoke-v1',
+      results:body.texts.map(item => ({
+        id:item.id, revision:item.revision, status:'complete', entities:[],
+      })),
+    }))
+    return
+  }
   if (request.url === '/api/zeroclave-privacy/telemetry/config' && request.method === 'GET') {
     telemetryConfigRequests += 1
     response.writeHead(200, {'cache-control':'no-store','content-type':'application/json'})
@@ -146,6 +164,11 @@ try {
   })
   assert.equal(telemetryConfigRequests, 2, JSON.stringify(seenRequests))
   assert.equal(await page.getByText('当前部署未配置统计服务', {exact:true}).count(), 0)
+  await page.getByRole('button', {name:/ZeroClave API/}).click()
+  await page.getByRole('button', {name:'测试连接',exact:true}).click()
+  await page.getByRole('button', {name:/ZeroClave API.*已就绪/}).waitFor()
+  assert.ok(zeroClaveRequests >= 1, JSON.stringify(seenRequests))
+  await page.getByRole('button', {name:/本地正则/}).click()
   await page.waitForFunction(() => !document.querySelector('[role="switch"]')?.disabled)
   assert.equal(await telemetryToggle.getAttribute('aria-checked'), 'false')
   assert.equal(await telemetryToggle.isEnabled(), true)
@@ -179,7 +202,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   await page.screenshot({path:resolve(output,'settings-mobile.png'),fullPage:true})
   assert.deepEqual(errors, [])
-  console.log(JSON.stringify({passed:true,checks:['merged session activity','custom rule editor','critical send review','per-finding choice','custom outbound redaction','original draft','original messages','copy','storage reload','telemetry opt-in','telemetry payload allowlist','mobile layout'],output}))
+  console.log(JSON.stringify({passed:true,checks:['merged session activity','custom rule editor','critical send review','per-finding choice','custom outbound redaction','original draft','original messages','copy','storage reload','ZeroClave same-origin browser fetch','telemetry opt-in','telemetry payload allowlist','mobile layout'],output}))
 } finally {
   await browser?.close()
   await new Promise(resolveClose => server.close(resolveClose))
