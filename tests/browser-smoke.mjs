@@ -30,6 +30,7 @@ const telemetryEvents = []
 const telemetryEnabled = process.env.ZEROCLAVE_PRIVACY_PREVIEW !== '1'
 let telemetryConfigRequests = 0
 let zeroClaveRequests = 0
+const zeroClaveTexts = []
 const seenRequests = []
 const server = createServer(async (request, response) => {
   seenRequests.push(`${request.method} ${request.url}`)
@@ -39,6 +40,7 @@ const server = createServer(async (request, response) => {
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     const requestId = request.headers['x-request-id']
     zeroClaveRequests += 1
+    zeroClaveTexts.push(...body.texts.map(item => item.text))
     response.writeHead(200, {
       'cache-control':'no-store', 'content-type':'application/json', 'x-request-id':requestId,
     }).end(JSON.stringify({
@@ -168,6 +170,7 @@ try {
   await page.getByRole('button', {name:'测试连接',exact:true}).click()
   await page.getByRole('button', {name:/ZeroClave API.*已就绪/}).waitFor()
   assert.ok(zeroClaveRequests >= 1, JSON.stringify(seenRequests))
+  assert.ok(zeroClaveTexts.includes('ZeroClave synthetic connection test: demo@example.com'))
   await page.getByRole('button', {name:/本地正则/}).click()
   await page.waitForFunction(() => !document.querySelector('[role="switch"]')?.disabled)
   assert.equal(await telemetryToggle.getAttribute('aria-checked'), 'false')

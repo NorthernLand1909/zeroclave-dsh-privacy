@@ -39,7 +39,7 @@ The browser calls the plugin's same-origin `/api/zeroclave-privacy/detect` route
 
 This route is not a client-to-TEE end-to-end encrypted channel. The DSH Host and ZeroClave Gateway can see the draft plaintext during detection. The public API returns only entity positions and types; replacement and restoration remain client-side. Its contract also states that anonymous cache entries contain a text hash plus positions and types, not plaintext or entity values.
 
-The target Gateway must publish the anonymous `POST /v1/pii/detect` route and enable `PII_PUBLIC_DETECT_ENABLED`. Until that release is present, the UI connection test reports the route as unavailable and ZeroClave sends remain blocked. A `partial` response is always shown as incomplete, including when its entity list is empty, and is never treated as a clean scan.
+The target Gateway must publish the anonymous `POST /v1/pii/detect` route and enable `PII_PUBLIC_DETECT_ENABLED`. Until that release is present, the UI connection test reports the route as unavailable and ZeroClave sends remain blocked. The connection test sends the fixed synthetic sample `ZeroClave synthetic connection test: demo@example.com`; it never sends the current draft. A `partial` response is always shown as incomplete, including when its entity list is empty, and is never treated as a clean scan.
 
 ## Optional product telemetry
 

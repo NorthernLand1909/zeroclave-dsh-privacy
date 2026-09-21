@@ -65,6 +65,21 @@ function telemetryReporter(report: TelemetryReporter['report']): TelemetryReport
 afterEach(() => { localStorage.clear() })
 
 describe('ZeroClave controller integration', () => {
+  it('tests the connection with fixed synthetic text instead of the current draft', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (_url, init) => response(init, ['complete']))
+    const controller = new PrivacyController(
+      new PrivacyVault(memoryStore()), async () => [], remote(fetchMock),
+    )
+
+    await controller.testZeroClave()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(request(fetchMock.mock.calls[0]?.[1]).texts.map(item => item.text)).toEqual([
+      'ZeroClave synthetic connection test: demo@example.com',
+    ])
+    expect(controller.getSnapshot().detectorStates.zeroclave.status).toBe('ready')
+  })
+
   it('uses one correlated Gateway batch and restores the input order', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (_url, init) => response(
       init,

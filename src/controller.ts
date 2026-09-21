@@ -15,6 +15,7 @@ import type {
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
 const SEND_POLICY_STORAGE_KEY = 'zeroclave.privacy.send-policy'
+const ZEROCLAVE_CONNECTION_TEST_TEXT = 'ZeroClave synthetic connection test: demo@example.com'
 
 export class SendReviewCancelledError extends Error {}
 
@@ -346,7 +347,7 @@ export class PrivacyController {
       operation.signal, this.lifetime.signal, ...(signal === undefined ? [] : [signal]),
     ])
     try {
-      const result = await this.zeroclave.scan('', combined)
+      const result = await this.zeroclave.scan(ZEROCLAVE_CONNECTION_TEST_TEXT, combined)
       this.finishZeroClaveOperation(owner, {
         status: result.detector.status === 'partial' ? 'partial' : 'ready',
         ...(result.detector.requestId === undefined ? {} : { requestId: result.detector.requestId }),
