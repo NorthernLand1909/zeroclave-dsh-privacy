@@ -18,6 +18,8 @@ export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((
   if (config.name !== '@zeroclave/dsh-privacy/client') return config
   return {
     ...config,
+    minify: true,
+    sourcemap: 'hidden',
     plugins: [{
       name: 'zeroclave-brand-logo-inline',
       resolveId: {
