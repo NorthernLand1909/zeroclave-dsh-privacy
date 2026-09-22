@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "harness": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness.git",
+    "revision": "d347e703908d0406b7a7ef80e3a0e594d86b2215",
+    "tag": "dsh-v0.1.3-alpha.1"
+  },
+  "toolchain": {
+    "node": "24.19.0",
+    "pnpm": "11.7.0"
+  },
+  "lockfile": {
+    "generated_on": "2026-09-21",
+    "workspace_preference": "pinned Harness packages",
+    "install_commands": [
+      "pnpm install --frozen-lockfile",
+      "pnpm install --frozen-lockfile --filter '@zeroclave/dsh-privacy...'"
+    ],
+    "build_order": "Build the pristine Harness libraries before overlaying the plugin"
+  }
+}

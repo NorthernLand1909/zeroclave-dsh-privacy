@@ -133,6 +133,8 @@ pnpm run build
 
 The browser smoke test also runs from that package location. From a standalone clone, set `DSH_REPO` to the matching Harness checkout before running `node tests/browser-smoke.mjs`.
 
+GitHub Actions performs the same build against the exact Harness revision recorded under `integrations/deepseek-harness/`. Pull requests run type checks, tests, a real Chrome smoke test, and package-content auditing without using secrets. Trusted `main` pushes and manual runs also expose the audited `.tgz` plus its SHA-256 checksum as a short-lived workflow artifact.
+
 Install the built checkout into a Web profile and restart DSH:
 
 ```bash

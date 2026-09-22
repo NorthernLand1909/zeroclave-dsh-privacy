@@ -1,0 +1,133 @@
+name: Build and test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zeroclave-dsh-privacy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  HARNESS_REVISION: d347e703908d0406b7a7ef80e3a0e594d86b2215
+  NODE_VERSION: 24.19.0
+  PNPM_VERSION: 11.7.0
+  COMPANION_DIR: plugin/integrations/deepseek-harness/d347e703908d0406b7a7ef80e3a0e594d86b2215
+
+jobs:
+  build:
+    name: Harness build, tests, and package audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: plugin
+          persist-credentials: false
+
+      - name: Check out pinned DeepSeek Harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: d347e703908d0406b7a7ef80e3a0e594d86b2215
+          path: harness
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify pinned inputs
+        shell: bash
+        run: |
+          test "$(git -C harness rev-parse HEAD)" = "$HARNESS_REVISION"
+          cd "$COMPANION_DIR"
+          sha256sum --check SHA256SUMS
+
+      - name: Apply pinned Harness workspace policy
+        shell: bash
+        run: |
+          cp "$GITHUB_WORKSPACE/$COMPANION_DIR/pnpm-lock.yaml" "$GITHUB_WORKSPACE/harness/pnpm-lock.yaml"
+          cp "$GITHUB_WORKSPACE/$COMPANION_DIR/pnpm-workspace.yaml" "$GITHUB_WORKSPACE/harness/pnpm-workspace.yaml"
+
+      - name: Install pinned Harness dependencies
+        working-directory: harness
+        run: pnpm install --frozen-lockfile
+
+      - name: Build pinned Harness libraries
+        working-directory: harness
+        run: |
+          pnpm run build:lib:host
+          pnpm run build:lib:client
+
+      - name: Add plugin to built Harness
+        shell: bash
+        run: |
+          target="$GITHUB_WORKSPACE/harness/packages/experimental/zeroclave-privacy"
+          mkdir -p "$target"
+          rsync -a --delete \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=integrations \
+            "$GITHUB_WORKSPACE/plugin/" "$target/"
+
+      - name: Install frozen plugin dependencies
+        working-directory: harness
+        run: pnpm install --frozen-lockfile --filter '@zeroclave/dsh-privacy...'
+
+      - name: Type-check
+        working-directory: harness
+        run: pnpm --filter '@zeroclave/dsh-privacy' exec tsc --project tsconfig.json
+
+      - name: Build
+        working-directory: harness
+        run: pnpm --filter '@zeroclave/dsh-privacy' run bundle
+
+      - name: Run unit and integration tests
+        working-directory: harness
+        run: pnpm --filter '@zeroclave/dsh-privacy' test
+
+      - name: Install Chrome for browser smoke test
+        working-directory: harness
+        run: pnpm --filter '@zeroclave/dsh-privacy' exec playwright install --with-deps chrome
+
+      - name: Run real-browser smoke test
+        working-directory: harness
+        run: pnpm --filter '@zeroclave/dsh-privacy' exec node tests/browser-smoke.mjs
+
+      - name: Build and audit installable package
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          pnpm --dir "$GITHUB_WORKSPACE/harness" --filter '@zeroclave/dsh-privacy' pack \
+            --pack-destination "$GITHUB_WORKSPACE/artifacts"
+          node "$GITHUB_WORKSPACE/plugin/scripts/audit-package.mjs" "$GITHUB_WORKSPACE"/artifacts/*.tgz
+          cd "$GITHUB_WORKSPACE/artifacts"
+          sha256sum -- *.tgz > "$(basename "$(find . -maxdepth 1 -name '*.tgz' -print -quit)").sha256"
+
+      - name: Upload installable package
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zeroclave-dsh-privacy-${{ github.sha }}
+          path: |
+            artifacts/*.tgz
+            artifacts/*.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
