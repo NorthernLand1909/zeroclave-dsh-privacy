@@ -88,8 +88,10 @@ describe('telemetry Host proxy', () => {
     const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
 
     expect(patch).toContain('telemetryEnabled: true')
+    expect(patch).toContain('telemetryProvider: plausible')
     expect(patch).toContain('telemetryAuthMode: anonymous')
-    expect(patch).toContain('telemetryEndpoint: https://telemetry.zeroclave.ai')
+    expect(patch).toContain('telemetryEndpoint: https://plausible.io/api/event')
+    expect(patch).toContain('telemetrySite: zeroclave-dsh-privacy')
     expect(patch).not.toContain('telemetryKeyId:')
     expect(patch).not.toContain('telemetrySecretEnv:')
   })
@@ -169,6 +171,37 @@ describe('telemetry Host proxy', () => {
     ])
     expect(now).not.toHaveBeenCalled()
     expect(random).not.toHaveBeenCalled()
+  })
+
+  it('maps allowlisted events to Plausible custom event names', async () => {
+    const upstream = vi.fn<typeof fetch>(async () => new Response('ok', { status: 202 }))
+    const handlers = createTelemetryHandlers(activeConfig({
+      provider: 'plausible',
+      authMode: 'anonymous',
+      endpoint: 'https://plausible.io/api/event',
+      site: 'zeroclave-dsh-privacy',
+      secret: undefined,
+    }), { fetch: upstream, now: () => vector.timestamp, randomBytes: () => Buffer.alloc(16) })
+
+    const response = await invoke(handlers.events, {
+      body: JSON.stringify({
+        schema_version: 1,
+        event: 'detector_used',
+        daily_id: 'AAAAAAAAAAAAAAAAAAAAAA',
+        value: 'regex',
+      }),
+    })
+
+    expect(response.status).toBe(204)
+    const [input, init] = upstream.mock.calls[0] ?? []
+    if (input === undefined) throw new Error('Telemetry upstream was not called')
+    expect(requestURL(input)).toBe('https://plausible.io/api/event')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      domain: 'zeroclave-dsh-privacy',
+      name: 'detector_used_regex',
+      url: 'app://zeroclave-dsh-privacy/',
+    })
+    expect(new Headers(init?.headers).get('user-agent')).toBe('ZeroClave-Telemetry/0.1')
   })
 
   it('enforces the exact browser schema and the 512-byte boundary', async () => {

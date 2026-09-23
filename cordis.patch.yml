@@ -4,7 +4,9 @@
       config:
         gatewayBaseURL: https://zeroclave.com/v1
         timeoutMs: 15000
+        telemetryProvider: plausible
         telemetryEnabled: true
         telemetryAuthMode: anonymous
-        telemetryEndpoint: https://telemetry.zeroclave.ai
+        telemetryEndpoint: https://plausible.io/api/event
+        telemetrySite: zeroclave-dsh-privacy
         telemetryTimeoutMs: 2000

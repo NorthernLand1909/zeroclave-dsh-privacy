@@ -49,41 +49,27 @@ bundle makes the Host relay capability available, but that relay sends nothing
 until the browser user opts in. Administrators can disable the capability with
 `telemetryEnabled: false`.
 
-Marketplace installations use Alibaba Cloud ESA as a narrow public ingress.
-ESA validates and rebuilds the allowlisted request, signs the request to the
-origin, and forwards it to a local Node.js receiver and SQLite on the ZeroClave
-ECS host. ESA is not the authoritative datastore. The official ZeroClave DSH
-deployment can instead use the local receiver directly over loopback with HMAC.
-
-The browser sends only a fresh 16-byte random identifier for the current UTC
-day, the plugin version, and one of three fixed events: a successful non-empty
-privacy inspection, a successful protected send, or the detector actually
-used (`regex`, `embedded`, or `zeroclave`). Each event/value is delivered at
-most once per browser profile per day. It does not send message or redacted
-text, findings, entity types or counts, custom rules, session/account IDs,
-request IDs, errors, latency, URLs, locale, or device attributes. The resulting
-DAU is an approximation based on unique daily random IDs, not people. Clearing
-browser storage or withdrawing and granting consent again can create another
-ID on the same day.
-
-The browser calls only the same-origin DSH Host. The Host strictly validates the
-browser payload, rebuilds the fixed allowlist, and adds the package version.
-Marketplace Hosts use anonymous HTTPS relay mode and contain no shared
-telemetry credential:
+Marketplace installations use the Plausible Events API. The same-origin DSH
+Host validates the browser payload and maps it to fixed Plausible event names;
+it sends no Plausible API key and does not forward the browser's daily random
+identifier:
 
 ```yaml
 telemetryEnabled: true
+telemetryProvider: plausible
 telemetryAuthMode: anonymous
-telemetryEndpoint: https://telemetry.zeroclave.ai
+telemetryEndpoint: https://plausible.io/api/event
+telemetrySite: zeroclave-dsh-privacy
 telemetryTimeoutMs: 2000
 ```
 
 Here `telemetryEnabled` means only that the consent control can be offered; it
 does not grant browser consent. For the official deployment, configure HMAC
-plus the loopback receiver explicitly:
+plus the loopback receiver explicitly with `telemetryProvider: zeroclave`:
 
 ```yaml
 telemetryEnabled: true
+telemetryProvider: zeroclave
 telemetryAuthMode: hmac
 telemetryEndpoint: http://127.0.0.1:8788
 telemetryKeyId: dsh-prod-1
@@ -92,22 +78,20 @@ telemetryTimeoutMs: 2000
 ```
 
 The HMAC key comes only from the named environment variable; it is never a
-Cordis value, package file, or browser asset. Anonymous marketplace requests
-have no Host HMAC headers. ESA validates and rebuilds them before adding its
-own origin authentication.
+Cordis value, package file, or browser asset. Plausible receives only the
+fixed event names `privacy_active`, `protected_send`, `detector_used_regex`,
+`detector_used_embedded`, and `detector_used_zeroclave`. It does not receive
+text, findings, rules, daily IDs, session/account IDs, request IDs, errors,
+latency, or device attributes. Plausible may process connection metadata for
+its own visitor reports, so these metrics are event trends rather than an exact
+DAU measurement.
 
 Telemetry is best-effort and never blocks detection, redaction, or sending.
 Withdrawing consent aborts pending browser delivery and clears its dedicated
-telemetry IndexedDB. The service stores only a metric-scoped keyed hash, not
-the raw daily identifier, in a volatile runtime database. Its internal deletion
-threshold is 47 hours with a 48-hour external limit; aggregate counts contain
-no identifier. The official Host sends over loopback. For marketplace Hosts,
-Alibaba Cloud ESA terminates TLS and processes the allowlisted event body and
-connection metadata while forwarding it; this design does not intentionally
-write either to ESA logs or storage, but provider-level handling remains
-governed by Alibaba Cloud's terms. The public ingress and open-source Host can
-be imitated, so events are forgeable. These metrics are approximate product
-trends only, never billing, abuse decisions, or security policy.
+telemetry IndexedDB. Plausible is hosted in the EU; provider handling is
+governed by its terms and privacy policy. Public events can be fabricated, so
+these metrics are approximate product trends only, never billing, abuse
+decisions, or security policy.
 
 ## Regex coverage
 
