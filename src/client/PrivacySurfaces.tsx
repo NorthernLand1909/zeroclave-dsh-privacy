@@ -797,7 +797,7 @@ function reviewPreview(
   }, text)
 }
 
-function SendReviewView({ controller, review, t }: {
+export function SendReviewView({ controller, review, t }: {
   controller: PrivacyController
   review: NonNullable<PrivacySnapshot['pendingSendReview']>
   t: PrivacyDrawerProps['t']
@@ -1165,7 +1165,7 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
       </nav>
       <div className={css.drawerBody} data-zero-privacy-scroll ref={drawerBodyRef}>
         {snapshot.pendingSendReview !== undefined ? (
-          <SendReviewView controller={controller} review={snapshot.pendingSendReview} t={t} />
+          <AuditView controller={controller} live={live} sessionId={sessionId} t={t} />
         ) : null}
         {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'audit' ? (
           <DetectionView

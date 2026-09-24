@@ -290,6 +290,9 @@ export class PrivacyController {
     this.customFindings.set(sessionId, [...(this.customFindings.get(sessionId) ?? []), item])
     const finding = this.makeCustomFinding(item, start, end, live.result.detector.used)
     this.updateLive(sessionId, live.text, rebuildScanResult(live.text, live.result, [...live.result.findings, finding]), live.durationMs)
+    if (this.snapshot.pendingSendReview?.sessionId === sessionId) {
+      this.addSendReviewFinding(source, target, sourceType)
+    }
     return true
   }
 
@@ -631,6 +634,8 @@ export class PrivacyController {
       const abort = (): void => { this.settleSendReview(id, undefined) }
       this.sendReview = { id, resolve, signal, abort }
       signal.addEventListener('abort', abort, { once: true })
+      const first = parts[0]
+      if (first !== undefined) this.updateLive(sessionId, first.text, first.result)
       this.update({ ...this.snapshot, open: true, pendingSendReview: {
         id, sessionId, parts, redactByFinding, replacementByFinding,
       } })
@@ -654,6 +659,13 @@ export class PrivacyController {
     replacements.set(findingId, replacement)
     this.findingReplacements.set(sessionId, replacements)
     this.updateLive(sessionId, live.text, withFindingReplacements(live.result, replacements, live.text), live.durationMs)
+    const review = this.snapshot.pendingSendReview
+    const partIndex = review?.sessionId === sessionId
+      ? review.parts.findIndex(part => part.result.findings.some(finding => finding.id === findingId))
+      : -1
+    if (review !== undefined && partIndex >= 0) {
+      this.setSendReviewReplacement(`${String(partIndex)}:${findingId}`, replacement)
+    }
   }
 
   setLiveFindingProtection(sessionId: string, findingId: string, protectedValue: boolean, original: string): void {
@@ -664,6 +676,15 @@ export class PrivacyController {
         replacement: original }
       : finding)
     this.updateLive(sessionId, live.text, rebuildScanResult(live.text, live.result, findings), live.durationMs)
+    const review = this.snapshot.pendingSendReview
+    const partIndex = review?.sessionId === sessionId
+      ? review.parts.findIndex(part => part.result.findings.some(finding => finding.id === findingId))
+      : -1
+    if (review !== undefined && partIndex >= 0) {
+      const key = `${String(partIndex)}:${findingId}`
+      this.setSendReviewReplacement(key, original)
+      this.setSendReviewFinding(key, protectedValue)
+    }
   }
 
   async dispose(): Promise<void> {
