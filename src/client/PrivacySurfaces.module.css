@@ -1394,7 +1394,7 @@
   line-height: 16px;
 }
 
-.detectionView[data-review-surface] {
+.auditView[data-review-surface] {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
   gap: 16px;
