@@ -1,75 +1,120 @@
 # ZeroClave Privacy Firewall for DeepSeek Harness
 
-An experimental, local-first privacy plugin for the DeepSeek Harness Web UI.
+ZeroClave Privacy Firewall 是一个面向 DeepSeek Harness Web UI 的隐私检测插件。它在消息进入模型前检测敏感实体，并根据发送策略让用户确认、编辑或自动替换脱敏结果。
 
-## Current scope
+当前版本为 alpha。插件只检测消息文本；图片、文件、音频、工具参数和附件元数据不在检测范围内。
 
-- Scans the live text draft with deterministic browser-side regex rules.
-- Lets users add, edit, duplicate, enable, disable, delete, test, and locally persist regex rules.
-- Optionally loads [`gravitee-io/bert-small-pii-detection`](https://huggingface.co/gravitee-io/bert-small-pii-detection) and runs token classification in browser WebAssembly.
-- Merges regex and model findings into one normalized result.
-- Redacts a copy at the composer send boundary with session-scoped, collision-resistant placeholders.
-- Keeps the composer and local submission echo in their original form.
-- Restores known placeholders in user messages, assistant replies, and their copy actions before rendering.
-- Saves restoration mappings in browser IndexedDB before sending, so the same browser can restore messages after reload.
-- Shows the detector source on every finding and keeps the latest ten summary-only send records per DSH session.
-- Shows the current findings, redacted preview, and session send activity in one DSH detection view.
-- Supports the anonymous ZeroClave Gateway detector through a same-origin DSH Host proxy, with no API key.
-- Offers privacy-preserving product telemetry, enabled by default when configured and always user-disableable.
+## 功能概览
 
-With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan, a partial ZeroClave result, or a mapping write failure prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
+- 在 composer 发送边界执行检测和脱敏，保留用户原始草稿，发送失败时不会丢失输入。
+- 默认使用“手动确认”：检测完成后查看敏感实体和脱敏输出，再确认发送。
+- 可切换“自动脱敏”：检测成功后直接发送脱敏文本。
+- 在确认界面逐项编辑脱敏值、取消某一项保护，或使用“撤销”恢复保护。
+- 支持自定义敏感实体、正则规则，以及规则的新增、编辑、复制、启用、停用和删除。
+- 在浏览器中保存本地替换映射，使消息显示和复制时可以恢复原文；映射不发送给模型。
+- 显示当前会话的发送记录摘要，不保存原文、命中内容或脱敏文本。
+- 可选匿名使用统计，默认由部署配置决定，用户始终可以关闭。
 
-The default send policy pauses a message containing sensitive findings before Host admission. The manual review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value or edit its redacted replacement for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Entity detection**.
+## 检测方式
 
-Session activity contains only time, counts, highest risk, detector modes, and fallback status. It stores no draft, finding, evidence, replacement, or redacted text, and disappears when the page reloads.
+在插件的“检测设置”中选择检测器：
 
-## Detection backends
-
-| Backend | Execution | Network behavior | Status |
+| 检测器 | 执行位置 | 网络行为 | 适用场景 |
 | --- | --- | --- | --- |
-| Regex | Browser | None | Ready |
-| Embedded BERT | Browser WASM | Downloads pinned model files on first load; draft text is not sent to Hugging Face | Ready |
-| ZeroClave | Remote Gateway | Sends draft plaintext through the same-origin DSH Host proxy to the configured ZeroClave Gateway over HTTPS; no API key | Ready when the public Gateway route is deployed |
+| 本地正则 | 浏览器 | 不联网 | 结构化字段、密钥、合同编号、账号、邮箱、电话等 |
+| 浏览器本地 BERT | 浏览器 WebAssembly | 首次使用下载模型文件；不会上传消息文本 | 英文自然语言补充检测 |
+| ZeroClave API | DSH Host + ZeroClave Gateway | 浏览器只请求同源 DSH Host，由 Host 转发 HTTPS 请求 | 增强实体识别，适合需要网关检测的部署 |
 
-The embedded model is pinned to revision `f8c27a85c51c0168f07b9dcf00265bf0a4097939` and loads the repository's 28.7 MB `model.quant.onnx` artifact. Browser cache avoids downloading the weights again in normal use.
+本地正则无需下载，适合中文合同中的结构化字段。BERT 模型主要面向英文；中文合同建议以本地正则为主。BERT 不可用时可以在设置中明确切换到本地正则，不会默认为安全。
 
-### ZeroClave Gateway
+ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。需要回退时，请在“检测设置”中手动选择“本地正则”。插件不会把 ZeroClave 失败静默解释为安全。
 
-The browser calls the plugin's same-origin `/api/zeroclave-privacy/detect` route. The DSH Host forwards that request to the configured Gateway base URL, which defaults to `https://zeroclave.com/v1`, and never adds an API key or authorization header. Keeping the browser request same-origin avoids depending on the Gateway's site CORS allowlist.
+### ZeroClave 网关边界
 
-This route is not a client-to-TEE end-to-end encrypted channel. The DSH Host and ZeroClave Gateway can see the draft plaintext during detection. The public API returns only entity positions and types; replacement and restoration remain client-side. Its contract also states that anonymous cache entries contain a text hash plus positions and types, not plaintext or entity values.
+浏览器请求的地址是同源路径：
 
-The target Gateway must publish the anonymous `POST /v1/pii/detect` route and enable `PII_PUBLIC_DETECT_ENABLED`. Until that release is present, the UI connection test reports the route as unavailable and ZeroClave sends remain blocked. The connection test sends the fixed synthetic sample `ZeroClave synthetic connection test: demo@example.com`; it never sends the current draft. A `partial` response is always shown as incomplete, including when its entity list is empty, and is never treated as a clean scan.
+```text
+POST /api/zeroclave-privacy/detect
+```
 
-## Optional product telemetry
+DSH Host 将请求转发到配置的网关地址，默认目标为：
 
-Browser telemetry is on by default when configured, and **Detection settings**
-always provides an explicit opt-out. Global Privacy Control forces it off. The
-marketplace bundle makes the Host relay capability available. Administrators can disable the capability with
-`telemetryEnabled: false`.
+```text
+https://zeroclave.com/v1/pii/detect
+```
 
-Marketplace installations use the Plausible Events API. The same-origin DSH
-Host validates the browser payload and maps it to fixed Plausible event names;
-it sends no Plausible API key and does not forward the browser's daily random
-identifier:
+浏览器不需要 ZeroClave API key，也不依赖网关站点的 CORS 配置。连接测试只发送固定的合成文本 `ZeroClave synthetic connection test: demo@example.com`，不会发送当前草稿。
+
+这不是浏览器到 TEE 的端到端加密通道。选择 ZeroClave 时，DSH Host 和 Gateway 在检测阶段可以看到原文；模型收到的是后续脱敏结果。网关响应只包含实体位置和类型，替换值由客户端生成。
+
+## 发送流程
+
+### 手动确认
+
+1. 插件检测当前消息文本。
+2. 右侧面板显示“当前输入”“脱敏输出”和敏感实体列表。
+3. 用户可以修改脱敏值、取消某一项保护，或者撤销取消操作。
+4. 点击“确认脱敏并发送”后，直接发送当前脱敏文本并清空草稿。
+5. 点击“取消发送”则保留原草稿。
+
+取消保护会明确提示该内容将以原文发送给大模型。只有发送成功后输入框才会清空；失败时原输入仍然保留。
+
+### 自动脱敏
+
+检测成功后，插件直接将脱敏文本交给 Harness composer。原始草稿不会被插件改写，只有发送给会话和模型的文本使用脱敏结果。
+
+## 本地规则和自定义实体
+
+打开插件的“正则规则”页可以管理规则。每条规则包括：
+
+- 名称和 JavaScript 正则表达式；
+- `i`、`m`、`s`、`u` 标志；
+- 整体匹配或捕获组作为脱敏范围；
+- 实体类型、类别、严重级别和启用状态。
+
+规则在保存前必须通过测试。规则保存在当前浏览器 origin 的 `localStorage` 中，不会同步到其他浏览器或设备。规则执行在一次性 Web Worker 中，并受到输入长度、规则数量和匹配数量限制；超时、规则错误或规则在发送期间发生变化时，发送会被阻止。
+
+检测结果中的“+”按钮可以为当前消息添加自定义敏感实体，填写原文和替换内容后即可纳入本次检测和发送。
+
+## 数据和隐私边界
+
+- 插件只处理当前消息文本，不检测附件、图片、音频、工具调用参数或文件内容。
+- 本地正则和浏览器本地 BERT 不会把消息文本发送到检测服务。
+- ZeroClave 会把检测请求从浏览器转发到 DSH Host，再由 Host 通过 HTTPS 请求 Gateway；Host 和 Gateway 可见检测原文。
+- 发送到模型前，敏感实体会被替换为客户端生成的占位符或用户编辑后的值。
+- 原文到占位符的映射保存在浏览器 IndexedDB，仅用于当前浏览器显示和复制恢复，不进入模型请求或 Host 会话日志。
+- 清除浏览器数据、更换浏览器或 origin、以及在其他设备打开会话，都会使本地恢复映射不可用。
+- 检测结果中的原始命中内容不会写入发送历史；历史只保存时间、风险级别、数量、检测器和替换摘要。
+- 启用隐私功能时，插件会阻止无法保留会话映射的低级 `conversation.send(text)` 路径；请使用正常 composer。
+
+## 匿名使用统计
+
+遥测由 DSH Host 提供同源中继，浏览器只提交固定白名单事件：
+
+- `privacy_active`：是否执行了隐私检测；
+- `protected_send`：受保护的请求是否成功发送；
+- `detector_used_*`：实际使用的检测器。
+
+事件不包含输入文本、命中内容、规则、会话内容、错误、请求 ID 或设备属性。事件可能被伪造，因此只适合观察近似产品趋势，不适合计费、安全决策或精确 DAU。
+
+部署配置中的 `telemetryEnabled` 控制是否提供遥测能力。官方配置使用 Plausible 时，可以这样配置：
 
 ```yaml
-telemetryEnabled: true
 telemetryProvider: plausible
+telemetryEnabled: true
 telemetryAuthMode: anonymous
 telemetryEndpoint: https://plausible.io/api/event
 telemetrySite: zeroclave-dsh-privacy
 telemetryTimeoutMs: 2000
 ```
 
-Here `telemetryEnabled` controls whether the telemetry capability is offered;
-the browser defaults to consent unless the user has opted out or GPC is active.
-For the official deployment, configure HMAC
-plus the loopback receiver explicitly with `telemetryProvider: zeroclave`:
+用户可以在“检测设置”关闭“共享匿名使用统计”。浏览器的 Global Privacy Control（GPC）也会强制关闭该选项。Plausible 可能处理请求中的连接元数据，例如 IP 地址；插件不会主动发送文本或检测结果。
+
+如果使用 ZeroClave 的 HMAC 遥测服务：
 
 ```yaml
-telemetryEnabled: true
 telemetryProvider: zeroclave
+telemetryEnabled: true
 telemetryAuthMode: hmac
 telemetryEndpoint: http://127.0.0.1:8788
 telemetryKeyId: dsh-prod-1
@@ -77,92 +122,118 @@ telemetrySecretEnv: ZEROCLAVE_TELEMETRY_HMAC_SECRET
 telemetryTimeoutMs: 2000
 ```
 
-The HMAC key comes only from the named environment variable; it is never a
-Cordis value, package file, or browser asset. Plausible receives only the
-fixed event names `privacy_active`, `protected_send`, `detector_used_regex`,
-`detector_used_embedded`, and `detector_used_zeroclave`. It does not receive
-text, findings, rules, daily IDs, session/account IDs, request IDs, errors,
-latency, or device attributes. Plausible may process connection metadata for
-its own visitor reports, so these metrics are event trends rather than an exact
-DAU measurement.
+HMAC 密钥只从 Host 环境变量读取，不会写入插件包或浏览器资源。
 
-Telemetry is best-effort and never blocks detection, redaction, or sending.
-Withdrawing consent aborts pending browser delivery and clears its dedicated
-telemetry IndexedDB. Plausible is hosted in the EU; provider handling is
-governed by its terms and privacy policy. Public events can be fabricated, so
-these metrics are approximate product trends only, never billing, abuse
-decisions, or security policy.
+## 配置
 
-## Regex coverage
+插件 Host 配置位于 `cordis.patch.yml` 的插件条目中：
 
-The deterministic layer currently recognizes common email addresses, mainland China phone numbers, labeled Chinese national IDs, social credit codes, contract parties and identifiers, addresses, bank details, financial amounts, IPv4 addresses, Luhn-valid payment cards, checksum-valid IBANs, labeled passwords, common API token prefixes, and PEM private keys.
-
-Every finding contains a category, entity type, character range, masked evidence, severity, detector id, and replacement placeholder. Local regex and BERT findings also carry confidence. The Gateway contract does not return confidence, so ZeroClave findings do not display or export a fabricated score. The raw evidence is never included in the normalized JSON view.
-
-### Custom regex rules
-
-Open **Regex rules** in the privacy drawer to edit the detection policy for the current browser origin. Each rule defines a name, JavaScript regular expression, optional `i`/`m`/`s`/`u` flags, the complete match or one capture group to redact, entity type, category, severity, and enabled state. A rule must pass its sample test before the editor saves it. Built-in rules can be edited, disabled, duplicated, or restored; custom rules can also be deleted.
-
-Saved rules apply to draft previews and normal composer sends. The plugin stores them in browser `localStorage`; they do not synchronize across browsers or devices. User-authored expressions run in a disposable Web Worker with limits of 1.5 seconds, 100 rules, 500,000 input characters, and 10,000 matches. A timeout, malformed rule, storage failure, or rule change during admission prevents the send so the original draft remains available.
-
-## Development
-
-This package currently builds against the DeepSeek Harness monorepo because the DSH client bundle preset is repository-owned. Place or link this directory at `packages/experimental/zeroclave-privacy` in a matching Harness checkout, then run:
-
-```bash
-pnpm install
-pnpm --filter @zeroclave/dsh-privacy test
-pnpm run build
+```yaml
+- insert:
+    - id: zeroclave-privacy
+      name: '@zeroclave/dsh-privacy'
+      config:
+        gatewayBaseURL: https://zeroclave.com/v1
+        timeoutMs: 15000
+        telemetryProvider: plausible
+        telemetryEnabled: true
+        telemetryAuthMode: anonymous
+        telemetryEndpoint: https://plausible.io/api/event
+        telemetrySite: zeroclave-dsh-privacy
+        telemetryTimeoutMs: 2000
 ```
 
-The browser smoke test also runs from that package location. From a standalone clone, set `DSH_REPO` to the matching Harness checkout before running `node tests/browser-smoke.mjs`.
+主要字段：
 
-GitHub Actions performs the same build against the exact Harness revision recorded under `integrations/deepseek-harness/`. Pull requests run type checks, tests, a real Chrome smoke test, and package-content auditing without using secrets. Trusted `main` and `alpha` pushes, plus manual runs, also expose the audited `.tgz` and its SHA-256 checksum as a short-lived workflow artifact.
+| 字段 | 说明 | 默认值 |
+| --- | --- | --- |
+| `gatewayBaseURL` | ZeroClave Gateway 基础地址，只允许 HTTPS；本机回环地址可使用 HTTP | `https://zeroclave.com/v1` |
+| `timeoutMs` | ZeroClave 检测超时时间，范围 100 至 30000 ms | `15000` |
+| `telemetryEnabled` | 是否向浏览器提供遥测能力 | `false` |
+| `telemetryProvider` | `zeroclave` 或 `plausible` | `zeroclave` |
+| `telemetryAuthMode` | `anonymous` 或 `hmac` | `anonymous` |
+| `telemetryEndpoint` | 遥测接收地址 | `https://telemetry.zeroclave.ai` |
+| `telemetrySite` | Plausible site 名称 | `zeroclave-dsh-privacy` |
+| `telemetryTimeoutMs` | 遥测中继超时时间，范围 100 至 10000 ms | `2000` |
 
-Install the built checkout into a Web profile and restart DSH:
+`telemetryEnabled: true` 只表示部署提供遥测能力，不代表用户无法关闭；浏览器端仍受用户选择和 GPC 控制。
+
+## 构建和测试
+
+插件依赖 DeepSeek Harness 的 workspace 包，不能直接在独立目录执行 `npm run build`。当前包提供的是 `bundle` 脚本，不提供 `build` 脚本。
+
+仓库记录了经过校验的 Harness revision：
+
+```text
+revision: d347e703908d0406b7a7ef80e3a0e594d86b2215
+tag: dsh-v0.1.3-alpha.1
+Node: 24.19.0
+pnpm: 11.7.0
+```
+
+推荐构建流程：
+
+```bash
+git clone https://github.com/ZeroClave/zeroclave-dsh-privacy.git
+git clone https://github.com/deepseek-ai/deepseek-harness.git
+
+cd deepseek-harness
+git checkout d347e703908d0406b7a7ef80e3a0e594d86b2215
+mkdir -p packages/experimental/zeroclave-privacy
+rsync -a --delete \
+  --exclude=.git \
+  --exclude=.github \
+  --exclude=integrations \
+  ../zeroclave-dsh-privacy/ packages/experimental/zeroclave-privacy/
+
+pnpm install --frozen-lockfile
+pnpm run build:lib:host
+pnpm run build:lib:client
+pnpm install --frozen-lockfile --filter '@zeroclave/dsh-privacy...'
+pnpm --filter '@zeroclave/dsh-privacy' exec tsc --project tsconfig.json --noEmit
+pnpm --filter '@zeroclave/dsh-privacy' run bundle
+pnpm --filter '@zeroclave/dsh-privacy' test
+```
+
+运行真实浏览器 smoke test 需要 Chrome：
+
+```bash
+pnpm --filter '@zeroclave/dsh-privacy' exec playwright install --with-deps chrome
+DSH_REPO="$PWD" pnpm --filter '@zeroclave/dsh-privacy' exec node \
+  packages/experimental/zeroclave-privacy/tests/browser-smoke.mjs
+```
+
+生成可安装包：
+
+```bash
+pnpm --filter '@zeroclave/dsh-privacy' pack --pack-destination ./artifacts
+node packages/experimental/zeroclave-privacy/scripts/audit-package.mjs artifacts/*.tgz
+shasum -a 256 artifacts/*.tgz
+```
+
+GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试、Chrome smoke test 和安装包审计。push 和手动运行会上传带 SHA-256 校验文件的 `.tgz` artifact。
+
+## 本地安装到 DSH
+
+在匹配的 Harness checkout 中执行：
 
 ```bash
 pnpm dsh plugin --profile web add ./packages/experimental/zeroclave-privacy
 pnpm dsh web --no-open
 ```
 
-For marketplace distribution, publish the prebuilt npm package or provide the
-prebuilt `npm pack`/`pnpm pack` tarball. Build first with the matching Harness
-checkout, then run `pnpm --filter @zeroclave/dsh-privacy pack`. The package
-manifest includes the DSH bundle patch and browser client artifact.
+修改插件源码或替换构建包后，需要重新构建并重启对应 DSH Web profile。直接从 GitHub 源码 URL 安装目前不受支持；请使用 Harness workspace 构建出的 npm tarball。
 
-Installing this repository directly from a GitHub source URL is not currently
-supported: the package has no self-contained `prepare` build, and its tsdown
-configuration intentionally resolves build helpers from a matching Harness
-monorepo checkout. Use the prebuilt package or tarball until that build is made
-self-contained.
+## 已知限制
 
-## Security boundaries
+- 检测结果不是合规保证，仍可能存在误报和漏报。
+- BERT 模型主要面向英文，中文合同不应只依赖 BERT。
+- ZeroClave 不是 E2EE 通道；网关和 DSH Host 在检测阶段可见原文。
+- 直接 Host API、自动化脚本和 composer 之外的发送路径不在浏览器适配器的完整保护范围内。
+- 本地恢复映射不跨浏览器、设备或 origin 同步。
+- 自定义规则使用 JavaScript 正则语法，当前没有 RE2 导入/导出功能。
+- 浏览器历史、搜索和非 Chat 视图可能只保留 Host 侧的脱敏表示。
 
-- Scanning is disabled by default and the enabled flag is stored only in browser local storage.
-- Regex, BERT, and ZeroClave inference inspect text drafts only. Attachments, images, audio, and tool payloads are not scanned.
-- Loading the model contacts Hugging Face for public model artifacts. It does not make the model remote and does not send draft text.
-- Selecting ZeroClave sends draft plaintext through the DSH Host proxy to the configured ZeroClave Gateway over HTTPS. The anonymous endpoint requires no API key, but it is not E2EE and the Gateway can read the plaintext.
-- The selected BERT model is English-focused. Chinese structured fields rely primarily on regex rules.
-- Detection has false positives and false negatives. It is a review aid, not a compliance guarantee.
-- With regex or embedded BERT, enabled composer sends deliver only redacted text to DSH and its configured chat-model Provider. With ZeroClave, DSH Host and the detection Gateway first receive plaintext for detection; the conversation and chat-model Provider receive only the redacted result. Disabling privacy sends original text.
-- While privacy is enabled, the browser's lower-level `conversation.send(text)` shortcut is blocked because it cannot preserve the composer's session-aware restoration mapping. Use the normal composer path.
-- Restoration mappings contain original sensitive values and stay in IndexedDB on the browser origin. They are never included in the outgoing prompt or the Host session log. Clearing browser data, changing origin/browser, or opening the conversation on another device removes access to those mappings.
-- Display restoration is limited to visible message prose. Markdown destinations, code, attachment metadata, paths, identifiers, and tool payloads retain placeholders.
-- Old `__PII_*__` messages from releases through alpha.5 have no durable restoration map. Unknown placeholders are preserved; the plugin cannot reconstruct their originals.
-- ZeroClave requests are visible in the detection settings, expose connection errors, and use a longer draft debounce. Service failures and incomplete results block sending instead of being interpreted as no findings.
-- Product telemetry is enabled by default when configured, remains user-disableable, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, and public events can be fabricated, so metrics are approximate only.
+## 许可证
 
-## Known Limitations and Deferred Work
-
-- Automatic redaction covers the Web composer's queue and steer sends. Direct Host API/automation requests and slash-command execution outside this browser adapter are not covered; the browser-level `conversation.send(text)` shortcut is blocked while privacy is enabled.
-- Custom expressions use the browser's JavaScript regular-expression syntax. The editor does not provide RE2 compatibility or import/export in this alpha.
-- Mapping inheritance for forked sessions and synchronization across devices are not implemented.
-- This alpha adapts the public `conversation.sendSession` method and Chat `StoredEntry.component` renderers because the supported Harness versions have no dedicated redaction middleware. Both adapters unwind when the plugin unloads and require compatibility checks on Harness upgrades. They never rewrite durable messages or model history.
-- Browser history/search exports and non-Chat views retain the Host's redacted representation.
-
-The regression suite covers original composer echoes, redacted admissions, summary-only session activity, failures, cancellation, full overlap coverage, stable mapping reuse, reload restoration, copy actions, and adapter teardown. The optional released-bundle test exercises the locally cached Harness `0.1.1-rc.2` service. `tests/browser-smoke.mjs` exercises the built plugin with real browser IndexedDB and synthetic messages; it does not call a model API.
-
-## License
-
-Apache-2.0. The referenced model is also published under Apache-2.0; consult its model card for intended use, evaluation results, and limitations.
+本项目使用 Apache-2.0 许可证。内置 BERT 模型的许可证和使用限制请以其模型卡为准。
