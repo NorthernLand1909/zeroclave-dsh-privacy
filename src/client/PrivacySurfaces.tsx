@@ -30,7 +30,10 @@ export type PrivacyDrawerProps =
   PropsRuntime<'shell.overlay'> & PropsLocale<'zeroclave.privacy'> & ControllerProps & DrawerInjectedProps
 
 interface DrawerInjectedProps {
-  sessions: { binding(sessionId: string): { session: object } | undefined }
+  sessions: {
+    binding(sessionId: string): { session: object } | undefined
+    scope(sessionId: string): object | undefined
+  }
   conversation: object
 }
 
@@ -1270,7 +1273,17 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
                   sendSession?: (target: object, text: string, attachments: readonly string[], mode: 'queue') => Promise<unknown>
                 }).sendSession
                 if (sendSession === undefined) { setSending(false); return }
-                void sendSession.call(conversation, session, live.result.redactedText, [], 'queue').finally(() => { setSending(false) })
+                void sendSession.call(conversation, session, live.result.redactedText, [], 'queue')
+                  .then((outcome: unknown) => {
+                    if (typeof outcome !== 'object' || outcome === null || !('kind' in outcome)
+                      || outcome.kind !== 'success') return
+                    const scope = sessions.scope(sessionId)
+                    const input = (conversation as {
+                      input?: { for?: (target: object) => { setDraft(text: string): void } }
+                    }).input
+                    if (scope !== undefined && input?.for !== undefined) input.for(scope).setDraft('')
+                  })
+                  .finally(() => { setSending(false) })
               }}>
               {t('review.confirmSend')}
             </button>
