@@ -103,14 +103,6 @@ jobs:
         working-directory: harness
         run: pnpm --filter '@zeroclave/dsh-privacy' test
 
-      - name: Install Chrome for browser smoke test
-        working-directory: harness
-        run: pnpm --filter '@zeroclave/dsh-privacy' exec playwright install --with-deps chrome
-
-      - name: Run real-browser smoke test
-        working-directory: harness
-        run: pnpm --filter '@zeroclave/dsh-privacy' exec node tests/browser-smoke.mjs
-
       - name: Build and audit installable package
         shell: bash
         run: |

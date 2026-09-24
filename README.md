@@ -195,14 +195,6 @@ pnpm --filter '@zeroclave/dsh-privacy' run bundle
 pnpm --filter '@zeroclave/dsh-privacy' test
 ```
 
-运行真实浏览器 smoke test 需要 Chrome：
-
-```bash
-pnpm --filter '@zeroclave/dsh-privacy' exec playwright install --with-deps chrome
-DSH_REPO="$PWD" pnpm --filter '@zeroclave/dsh-privacy' exec node \
-  packages/experimental/zeroclave-privacy/tests/browser-smoke.mjs
-```
-
 生成 npm/DSH 命令行安装包：
 
 ```bash
@@ -226,7 +218,7 @@ rsync -a --include='*/' --include='*.d.ts' --exclude='*' \
 
 从 GitHub Actions 的 artifact 中下载 `zeroclave-dsh-privacy-<commit>.zip`，直接上传到 [DeepSeek Stream 插件发布页](https://deepseek.stream/upload)。上传页要求插件压缩包为 ZIP，并在包内提供标准清单文件；不要上传 `.tgz`。
 
-GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试、Chrome smoke test 和安装包审计。push 和手动运行会上传 `.tgz`、Stream 用 `.zip` 以及对应的 SHA-256 校验文件。
+GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试和安装包审计。push 和手动运行会上传 `.tgz`、Stream 用 `.zip` 以及对应的 SHA-256 校验文件。
 
 ## 本地安装到 DSH
 
