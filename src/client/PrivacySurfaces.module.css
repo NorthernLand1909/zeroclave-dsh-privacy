@@ -1481,8 +1481,8 @@
 
 .telemetryHeading small {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 12px;
+  line-height: 19px;
 }
 
 .telemetrySubline {

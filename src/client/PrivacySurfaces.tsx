@@ -1270,7 +1270,7 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
                   sendSession?: (target: object, text: string, attachments: readonly string[], mode: 'queue') => Promise<unknown>
                 }).sendSession
                 if (sendSession === undefined) { setSending(false); return }
-                void sendSession.call(conversation, session, live.text, [], 'queue').finally(() => { setSending(false) })
+                void sendSession.call(conversation, session, live.result.redactedText, [], 'queue').finally(() => { setSending(false) })
               }}>
               {t('review.confirmSend')}
             </button>

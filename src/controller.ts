@@ -669,7 +669,7 @@ export class PrivacyController {
     if (live === undefined) return
     const findings = live.result.findings.map(finding => finding.id === findingId
       ? { ...finding, action: protectedValue ? 'redacted' as const : 'kept' as const,
-        replacement: protectedValue ? finding.replacement : original }
+        replacement: original }
       : finding)
     this.updateLive(sessionId, live.text, rebuildScanResult(live.text, live.result, findings), live.durationMs)
   }

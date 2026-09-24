@@ -66,6 +66,22 @@ describe('session send activity', () => {
 })
 
 describe('controller telemetry boundaries', () => {
+  it('restores the finding action and current redaction after undoing unprotect', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    await controller.inspect('session-1', 'demo@example.com')
+    const finding = controller.getSnapshot().liveBySession.get('session-1')?.result.findings[0]
+    if (finding === undefined) throw new Error('email finding missing')
+
+    controller.setLiveFindingProtection('session-1', finding.id, false, 'demo@example.com')
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.result.findings[0]?.action).toBe('kept')
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.result.redactedText).toBe('demo@example.com')
+
+    controller.setLiveFindingProtection('session-1', finding.id, true, finding.replacement)
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.result.findings[0]?.action).toBe('redacted')
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.result.redactedText).toBe(finding.replacement)
+  })
+
   it('reports activity and the actual detector only after a successful non-empty scan', async () => {
     const report = vi.fn()
     const reporter = telemetryReporter(report)
