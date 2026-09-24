@@ -959,14 +959,6 @@ function SendReviewView({ controller, review, t }: {
         ))}
       </section>
       {kept > 0 ? <p className={css.reviewWarning}>{t('review.keptWarning')}</p> : null}
-      <div className={css.reviewActions}>
-        <button className={css.secondaryButton} type="button" onClick={() => { controller.cancelSendReview() }}>
-          {t('review.cancelSend')}
-        </button>
-        <button className={css.primaryButton} type="button" onClick={() => { controller.confirmSendReview() }}>
-          {t('review.confirmSend')}
-        </button>
-      </div>
     </div>
   )
 }
@@ -1140,8 +1132,7 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
   if (!snapshot.open) return null
 
   return (
-    <aside className={css.drawer} data-zero-privacy-drawer="open"
-      data-review={snapshot.pendingSendReview === undefined ? undefined : 'send'}>
+    <aside className={css.drawer} data-zero-privacy-drawer="open">
       <header className={css.drawerHeader}>
         <div className={css.brandIdentity}>
           <img className={css.brandLogo} src={zeroclaveLogo} alt={t('brand')} />
@@ -1157,10 +1148,11 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
           controller.setOpen(false)
         }}><LucideIcon icon={X} size={18} /></button>
       </header>
-      {snapshot.pendingSendReview === undefined ? <nav className={css.tabs}>
+      <nav className={css.tabs}>
         {tabs.map(([id, label]) => (
           <button
             data-selected={snapshot.activeTab === id || undefined}
+            disabled={snapshot.pendingSendReview !== undefined}
             key={id}
             type="button"
             onClick={() => { controller.setTab(id) }}
@@ -1168,7 +1160,7 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
             {t(label)}
           </button>
         ))}
-      </nav> : null}
+      </nav>
       <div className={css.drawerBody} data-zero-privacy-scroll ref={drawerBodyRef}>
         {snapshot.pendingSendReview !== undefined ? (
           <SendReviewView controller={controller} review={snapshot.pendingSendReview} t={t} />
@@ -1186,8 +1178,17 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
         {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'model'
           ? <ModelView controller={controller} snapshot={snapshot} t={t} /> : null}
       </div>
-      {snapshot.pendingSendReview === undefined ? <footer className={css.drawerFooter}>
-        {snapshot.activeTab === 'audit' && live?.result.findings.length !== 0 && sessionId !== undefined ? (
+      <footer className={css.drawerFooter}>
+        {snapshot.pendingSendReview !== undefined ? (
+          <div className={css.drawerSendActions}>
+            <button className={css.secondaryButton} type="button" onClick={() => { controller.cancelSendReview() }}>
+              {t('review.cancelSend')}
+            </button>
+            <button className={css.primaryButton} type="button" onClick={() => { controller.confirmSendReview() }}>
+              {t('review.confirmSend')}
+            </button>
+          </div>
+        ) : snapshot.activeTab === 'audit' && live?.result.findings.length !== 0 && sessionId !== undefined ? (
           <div className={css.drawerSendActions}>
             <button className={css.secondaryButton} type="button" onClick={() => { controller.setOpen(false) }}>
               {t('review.cancelSend')}
@@ -1217,13 +1218,13 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
             </button>
           </div>
         ) : null}
-        <div className={css.drawerFooterMeta}>
+        {snapshot.pendingSendReview === undefined ? <div className={css.drawerFooterMeta}>
           <a className={css.communityLink} href="https://zeroclave.com/community" target="_blank" rel="noreferrer">
             <i />{t('footer.core')}
           </a>
           <button type="button" onClick={() => { controller.setTab('model') }}>{t('footer.configure')} →</button>
-        </div>
-      </footer> : null}
+        </div> : null}
+      </footer>
     </aside>
   )
 }

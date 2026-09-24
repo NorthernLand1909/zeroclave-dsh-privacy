@@ -215,14 +215,6 @@
   pointer-events: auto;
 }
 
-.drawer[data-review='send'] {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.drawer[data-review='send'] .drawerBody {
-  overflow: hidden;
-}
-
 .drawerHeader {
   display: grid;
   grid-template-columns: minmax(140px, 1fr) auto 32px;
