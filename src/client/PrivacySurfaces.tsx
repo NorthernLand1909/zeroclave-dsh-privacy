@@ -846,6 +846,7 @@ function SendReviewView({ controller, review, t }: {
         </div>
         <span>{`${t('audit.completed')} · ${String(findings.length)}${t('audit.findingsUnit')}`}</span>
       </div>
+      <section className={css.findingsSection}>
       <div className={css.reviewEntitiesHeading}>
         <strong>{`${t('review.items')}（${String(activeFindings.length)}）`}</strong>
         <button className={css.reviewAddButton} type="button" title={t('review.addEntity')}
@@ -942,6 +943,7 @@ function SendReviewView({ controller, review, t }: {
           }}>{t('review.undo')}</button>
         </div>
       ) : null}
+      </section>
       <section className={css.reviewStages}>
         {review.parts.map((part, index) => (
           <div className={css.reviewStage} key={`input-${index}`}>
