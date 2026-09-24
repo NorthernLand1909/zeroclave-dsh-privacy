@@ -90,7 +90,10 @@ describe('ZeroClave controller integration', () => {
       new PrivacyVault(memoryStore()), async () => [], remote(fetchMock),
     )
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     controller.setDetectorMode('zeroclave')
+
+    expect(controller.scan('邮箱 alice@example.com').findings).toEqual([])
 
     const scans = await controller.prepareSendBatch('session-1', ['Alice', 'Bob'])
 

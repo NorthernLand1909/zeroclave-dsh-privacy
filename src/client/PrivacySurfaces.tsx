@@ -1,7 +1,7 @@
 import { createElement, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { randomUUID } from '@deepseek-ai/dsh-util-crypto'
-import { ArrowLeft, Copy, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide'
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, Copy, Pencil, Plus, RotateCcw, Search, Trash2, X } from 'lucide'
 import type { IconNode as LucideNode } from 'lucide'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -27,7 +27,12 @@ export type FooterButtonProps =
 export type PrivacyDockProps =
   PropsRuntime<'conversation.input.dock'> & PropsLocale<'zeroclave.privacy'> & ControllerProps
 export type PrivacyDrawerProps =
-  PropsRuntime<'shell.overlay'> & PropsLocale<'zeroclave.privacy'> & ControllerProps
+  PropsRuntime<'shell.overlay'> & PropsLocale<'zeroclave.privacy'> & ControllerProps & DrawerInjectedProps
+
+interface DrawerInjectedProps {
+  sessions: { binding(sessionId: string): { session: object } | undefined }
+  conversation: object
+}
 
 const ENTITY_KEYS: Record<PrivacyFinding['entityType'], PrivacyKey> = {
   AGE: 'entity.AGE',
@@ -190,13 +195,15 @@ function SwitchControl({ checked, label, disabled = false, onChange }: {
   )
 }
 
-function HighlightedText({ text, findings, t }: {
+function HighlightedText({ text, findings, t, cancelled }: {
   text: string
   findings: readonly PrivacyFinding[]
   t: PrivacyDrawerProps['t']
+  cancelled?: ReadonlySet<string>
 }): ReactNode {
   const ordered = [...findings]
-    .filter(finding => finding.start >= 0 && finding.end > finding.start && finding.end <= text.length)
+    .filter(finding => finding.action !== 'kept'
+      && finding.start >= 0 && finding.end > finding.start && finding.end <= text.length)
     .sort((left, right) => left.start - right.start || left.end - right.end)
   const output: ReactNode[] = []
   let cursor = 0
@@ -207,6 +214,7 @@ function HighlightedText({ text, findings, t }: {
       <mark
         className={css.sensitiveHighlight}
         data-risk={finding.severity}
+        data-cancelled={cancelled?.has(finding.id) || undefined}
         title={`${findingTypeLabel(finding, t)} · ${t(DETECTOR_KEYS[finding.detector])}`}
         key={finding.id}
       >
@@ -296,7 +304,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
     : remotePhase === 'error' ? t('dock.errorReminder')
       : incomplete ? t('dock.partialReminder')
         : `${String(count)} ${t('dock.items')} · ${t(
-          snapshot.sendPolicy === 'review-critical' ? 'dock.reviewReminder' : 'dock.reminder',
+          snapshot.sendPolicy === 'review-manual' ? 'dock.reviewReminder' : 'dock.reminder',
         )}`
   return (
     <div className={css.dock} data-risk={result.overallRisk}
@@ -351,30 +359,208 @@ function normalized(result: ScanResult): object {
   }
 }
 
-function AuditView({
-  live, t,
-}: {
-  live: ReturnType<PrivacySnapshot['liveBySession']['get']>
+function AuditFindings({ controller, live, sessionId, incomplete, t }: {
+  controller: PrivacyController
+  live: NonNullable<ReturnType<PrivacySnapshot['liveBySession']['get']>>
+  sessionId: string | undefined
+  incomplete: boolean
   t: PrivacyDrawerProps['t']
 }): ReactNode {
+  const [editingFindingId, setEditingFindingId] = useState<string>()
+  const [editValue, setEditValue] = useState('')
+  const [unprotectFinding, setUnprotectFinding] = useState<{ id: string; original: string; replacement: string }>()
+  const [undoFinding, setUndoFinding] = useState<{ id: string; original: string; replacement: string }>()
+  const [cancelledIds, setCancelledIds] = useState<ReadonlySet<string>>(new Set())
+  const [addingEntity, setAddingEntity] = useState(false)
+  const [addType, setAddType] = useState('')
+  const [addOriginal, setAddOriginal] = useState('')
+  const [addReplacement, setAddReplacement] = useState('')
+  const [addError, setAddError] = useState(false)
+  const [expandedValue, setExpandedValue] = useState<{ label: string; value: string }>()
+  useEffect(() => {
+    if (unprotectFinding === undefined || sessionId === undefined) return
+    if (window.confirm(t('review.unprotectMessage'))) {
+      controller.setLiveFindingProtection(sessionId, unprotectFinding.id, false, unprotectFinding.original)
+      setUndoFinding({ id: unprotectFinding.id, original: unprotectFinding.original, replacement: unprotectFinding.replacement })
+      setCancelledIds(current => new Set(current).add(unprotectFinding.id))
+    }
+    setUnprotectFinding(undefined)
+  }, [controller, sessionId, t, unprotectFinding])
+  return (
+    <section className={css.findingsSection}>
+      <div className={css.sectionHeading}>
+        <strong>{`${t('audit.findings')} (${String(live.result.findings.length - cancelledIds.size)})`}</strong>
+        <button className={css.reviewAddButton} type="button" title={t('review.addEntity')}
+          aria-label={t('review.addEntity')} onClick={() => { setAddingEntity(true); setAddError(false) }}>
+          <LucideIcon icon={Plus} size={18} />
+        </button>
+      </div>
+      {live.result.findings.length === cancelledIds.size ? (
+        <p className={incomplete ? css.incompleteFindings : css.noFindings}>
+          {incomplete ? t('audit.partialNoFindings') : `✓ ${t('audit.noFindings')}`}
+        </p>
+      ) : (
+        <div className={css.findingRows}>
+          {live.result.findings.filter(finding => !cancelledIds.has(finding.id)).map(finding => {
+            const original = live.text.slice(finding.start, finding.end)
+            const editing = editingFindingId === finding.id
+            return (
+                <div className={css.findingRow} data-cancelled={cancelledIds.has(finding.id) || undefined} key={finding.id}>
+                <div>
+                  <strong>{findingTypeLabel(finding, t)}</strong>
+                  <small>{t(CATEGORY_KEYS[finding.category])}</small>
+                </div>
+                {editing ? (
+                  <div className={css.findingEdit}>
+                    <input
+                      aria-label={`${t('review.editLabel')}: ${findingTypeLabel(finding, t)}`}
+                      value={editValue}
+                      onChange={event => { setEditValue(event.target.value) }}
+                      autoFocus
+                    />
+                    <div className={css.reviewEditActions}>
+                      <button type="button" onClick={() => {
+                        if (sessionId !== undefined) controller.setLiveFindingReplacement(sessionId, finding.id, editValue)
+                        setEditingFindingId(undefined)
+                      }}>{t('review.saveEdit')}</button>
+                      <button type="button" onClick={() => { setEditingFindingId(undefined) }}>{t('review.cancelEdit')}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={css.findingTransform}>
+                    <button className={css.entityValueButton} type="button" title={t('review.openValue')}
+                      onClick={() => { setExpandedValue({ label: findingTypeLabel(finding, t), value: original || finding.maskedEvidence }) }}>
+                      {original || finding.maskedEvidence}
+                    </button>
+                    <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+                    <button className={`${css.entityValueButton} ${css.entityValueReplacement}`} type="button"
+                      title={t('review.openValue')} onClick={() => { setExpandedValue({ label: t('review.redactedOutput'), value: finding.replacement || '—' }) }}>
+                      {finding.replacement || '—'}
+                    </button>
+                  </div>
+                )}
+                <div className={css.findingMeta}>
+                  <button className={css.reviewIconButton} type="button" title={t('review.edit')}
+                    aria-label={t('review.edit')} disabled={sessionId === undefined}
+                    onClick={() => {
+                      setEditingFindingId(finding.id)
+                      setEditValue(finding.replacement)
+                    }}><LucideIcon icon={Pencil} size={16} /></button>
+                    <button className={css.reviewIconButton} type="button" title={t('review.keep')}
+                      aria-label={t('review.keep')} disabled={sessionId === undefined}
+                      onClick={() => {
+                        if (sessionId !== undefined) setUnprotectFinding({
+                          id: finding.id, original, replacement: finding.replacement,
+                        })
+                      }}><LucideIcon icon={X} size={17} /></button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {addingEntity ? (
+        <div className={css.reviewAddForm}>
+          <strong>{t('review.addTitle')}</strong>
+          <input value={addType} placeholder={t('review.entityTypePlaceholder')} maxLength={40}
+            onChange={event => { setAddType(event.target.value); setAddError(false) }} />
+          <div className={css.reviewAddValues}>
+            <input value={addOriginal} placeholder={t('review.originalPlaceholder')}
+              onChange={event => { setAddOriginal(event.target.value); setAddError(false) }} />
+            <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+            <input value={addReplacement} placeholder={t('review.replacementPlaceholder')}
+              onChange={event => { setAddReplacement(event.target.value); setAddError(false) }} />
+          </div>
+          {addError ? <small className={css.reviewAddError}>{t('review.addError')}</small> : null}
+          <div className={css.reviewAddActions}>
+            <button type="button" onClick={() => { setAddingEntity(false) }}>{t('review.cancelEdit')}</button>
+            <button type="button" onClick={() => {
+              const added = sessionId !== undefined && controller.addLiveFinding(sessionId, addOriginal, addReplacement, addType)
+              if (!added) { setAddError(true); return }
+              setAddingEntity(false)
+              setAddType('')
+              setAddOriginal('')
+              setAddReplacement('')
+            }}>{t('review.add')}</button>
+          </div>
+        </div>
+      ) : null}
+      {live.result.policySignals.map(signal => (
+        <div className={css.policyRow} key={signal.policyId}>
+          <strong>{t('policy.CUSTOMER_KYC')}</strong>
+          <span>{t('risk.high')}</span>
+        </div>
+      ))}
+      {undoFinding !== undefined ? (
+        <div className={css.reviewUndoBar}>
+          <span>{t('review.undoDone').replace('{value}', undoFinding.original)}</span>
+          <button type="button" onClick={() => {
+            if (sessionId !== undefined) {
+              controller.setLiveFindingProtection(sessionId, undoFinding.id, true, undoFinding.replacement)
+              controller.setLiveFindingReplacement(sessionId, undoFinding.id, undoFinding.replacement)
+            }
+            setUndoFinding(undefined)
+            setCancelledIds(current => {
+              const next = new Set(current)
+              next.delete(undoFinding.id)
+              return next
+            })
+          }}>{t('review.undo')}</button>
+        </div>
+      ) : null}
+      {expandedValue !== undefined ? (
+        <div className={css.entityValuePopover} role="dialog" aria-label={t('review.fullValue')}>
+          <div><strong>{expandedValue.label}</strong><button type="button" aria-label={t('review.closeValue')}
+            onClick={() => { setExpandedValue(undefined) }}><LucideIcon icon={X} size={16} /></button></div>
+          <pre>{expandedValue.value}</pre>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function AuditView({
+  controller, live, sessionId, t,
+}: {
+  controller: PrivacyController
+  live: ReturnType<PrivacySnapshot['liveBySession']['get']>
+  sessionId: string | undefined
+  t: PrivacyDrawerProps['t']
+}): ReactNode {
+  const [rechecking, setRechecking] = useState(false)
   if (live === undefined || live.text.trim() === '') {
     return <div className={css.emptyState}>{t('audit.empty')}</div>
   }
   const payload = JSON.stringify(normalized(live.result), null, 2)
   const incomplete = live.result.detector.status === 'partial'
+  const statusText = incomplete ? t('audit.partialStatus')
+    : live.durationMs === undefined ? t('audit.checking') : t('audit.completed')
+  const findingCount = live.result.findings.length
+  const recheck = async (): Promise<void> => {
+    if (sessionId === undefined || rechecking) return
+    setRechecking(true)
+    try { await controller.inspect(sessionId, live.text) } finally { setRechecking(false) }
+  }
   return (
     <div className={css.auditView}>
-      <div className={css.inputMeta}>
-        <span>{t('audit.input')}</span>
-        <time>{new Date(live.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-      </div>
-
       <section className={css.pipelineSection}>
-        <div className={css.sectionHeading}>
-          <ShieldIcon size={16} />
-          <strong>{t('audit.pipeline')}</strong>
-          <small>{detectorSummary(live.result, t)}</small>
+        <div className={css.monitorHeading}>
+          <div>
+            <h3>{t('audit.pipeline')}</h3>
+            <p><strong>{t('audit.method')}：</strong>{detectorSummary(live.result, t)}</p>
+          </div>
+          <div className={css.monitorMeta}>
+            <span data-status={incomplete ? 'partial' : live.durationMs === undefined ? 'checking' : 'complete'}>
+              {statusText}
+              {live.durationMs === undefined ? '' : ` · ${String(findingCount)}${t('audit.findingsUnit')} · ${String(live.durationMs)}ms`}
+            </span>
+            <button className={css.secondaryButton} type="button" disabled={sessionId === undefined || rechecking}
+              onClick={() => { void recheck() }}>
+              {rechecking ? t('audit.rechecking') : t('audit.recheck')}
+            </button>
+          </div>
         </div>
+        <AuditFindings controller={controller} live={live} sessionId={sessionId} incomplete={incomplete} t={t} />
         <div className={css.stage} data-stage="plain">
           <div className={css.stageHeading}>
             <strong>{t('audit.stage1')}</strong>
@@ -394,45 +580,6 @@ function AuditView({
       {incomplete ? <p className={css.partialWarning}>{t('audit.partial')}</p> : null}
       {live.result.detector.fallback ? <p className={css.fallback}>{t('audit.fallback')}</p> : null}
 
-      <section className={css.findingsSection}>
-        <div className={css.sectionHeading}>
-          <strong>{`${t('audit.findings')} (${String(live.result.findings.length)})`}</strong>
-        </div>
-        {live.result.findings.length === 0 ? (
-          <p className={incomplete ? css.incompleteFindings : css.noFindings}>
-            {incomplete ? t('audit.partialNoFindings') : `✓ ${t('audit.noFindings')}`}
-          </p>
-        ) : (
-          <div className={css.findingRows}>
-            {live.result.findings.map(finding => (
-              <div className={css.findingRow} key={finding.id}>
-                <div>
-                  <strong>{findingTypeLabel(finding, t)}</strong>
-                  <small>{t(CATEGORY_KEYS[finding.category])}</small>
-                </div>
-                <code>{finding.maskedEvidence}</code>
-                <div className={css.findingMeta}>
-                  <DetectorBadge mode={finding.detector} t={t} />
-                  <span>{finding.detector === 'regex'
-                    ? ruleDisplayName(finding.ruleId, finding.entityType, finding.ruleName, t)
-                    : finding.detector === 'zeroclave'
-                      ? t('audit.gatewayFinding')
-                      : finding.confidence === undefined
-                        ? t('audit.modelFinding')
-                        : `${Math.round(finding.confidence * 100)}%`}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {live.result.policySignals.map(signal => (
-          <div className={css.policyRow} key={signal.policyId}>
-            <strong>{t('policy.CUSTOMER_KYC')}</strong>
-            <span>{t('risk.high')}</span>
-          </div>
-        ))}
-      </section>
-
       <details className={css.jsonSection}>
         <summary>
           <span>{t('audit.json')}</span>
@@ -451,6 +598,7 @@ function RecentSends({ controller, records, sessionId, t }: {
   t: PrivacyDrawerProps['t']
 }): ReactNode {
   const recent = [...records].reverse()
+  const [expandedId, setExpandedId] = useState<string>()
   return (
     <section className={css.activitySection}>
       <div className={css.activityHeading}>
@@ -460,7 +608,8 @@ function RecentSends({ controller, records, sessionId, t }: {
       </div>
       <div className={css.activityRows}>
         {recent.map(record => (
-          <article className={css.activityRow} key={record.id}>
+          <button className={css.activityRow} key={record.id} type="button" aria-expanded={expandedId === record.id}
+            onClick={() => { setExpandedId(current => current === record.id ? undefined : record.id) }}>
             <div className={css.activityMain}>
               <time>{new Date(record.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
               <div><strong>{t('activity.sent')}</strong><small>
@@ -473,7 +622,20 @@ function RecentSends({ controller, records, sessionId, t }: {
               {record.detectors.map(mode => <DetectorBadge mode={mode} key={mode} t={t} />)}
               {record.fallbackUsed ? <small>{t('source.regexFallback')}</small> : null}
             </div>
-          </article>
+            {expandedId === record.id ? (
+              <div className={css.activityDetails}>
+                {record.replacements.length === 0 ? <small>{t('activity.noDetails')}</small> : record.replacements.map((item, index) => (
+                  <div className={css.activityDetail} key={`${item.entityType}-${index}`}>
+                    <span className={css.reviewEntityTag}>{t(ENTITY_KEYS[item.entityType])}</span>
+                    <code>{item.original}</code>
+                    <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={15} /></span>
+                    <code className={css.reviewReplacement}>{item.replacement}</code>
+                    <small>{item.action === 'kept' ? t('activity.kept') : t('activity.redacted')}</small>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </button>
         ))}
       </div>
     </section>
@@ -489,7 +651,7 @@ function DetectionView({ controller, live, records, sessionId, t }: {
 }): ReactNode {
   return (
     <div className={css.detectionView}>
-      <AuditView live={live} t={t} />
+      <AuditView controller={controller} live={live} sessionId={sessionId} t={t} />
       {sessionId !== undefined && records.length > 0
         ? <RecentSends controller={controller} records={records} sessionId={sessionId} t={t} /> : null}
     </div>
@@ -688,10 +850,17 @@ function reviewFindingKey(partIndex: number, findingId: string): string {
   return `${String(partIndex)}:${findingId}`
 }
 
-function reviewPreview(text: string, result: ScanResult, partIndex: number, decisions: Readonly<Record<string, boolean>>): string {
+function reviewPreview(
+  text: string,
+  result: ScanResult,
+  partIndex: number,
+  decisions: Readonly<Record<string, boolean>>,
+  replacements: Readonly<Record<string, string>>,
+): string {
   return [...result.findings].sort((left, right) => right.start - left.start).reduce((value, finding) => {
-    if (decisions[reviewFindingKey(partIndex, finding.id)] === false) return value
-    return value.slice(0, finding.start) + finding.replacement + value.slice(finding.end)
+    const key = reviewFindingKey(partIndex, finding.id)
+    if (decisions[key] === false) return value
+    return value.slice(0, finding.start) + (replacements[key] ?? finding.replacement) + value.slice(finding.end)
   }, text)
 }
 
@@ -700,6 +869,15 @@ function SendReviewView({ controller, review, t }: {
   review: NonNullable<PrivacySnapshot['pendingSendReview']>
   t: PrivacyDrawerProps['t']
 }): ReactNode {
+  const [editingKey, setEditingKey] = useState<string>()
+  const [editValue, setEditValue] = useState('')
+  const [unprotectFinding, setUnprotectFinding] = useState<{ key: string; original: string; replacement: string }>()
+  const [undoFinding, setUndoFinding] = useState<{ key: string; original: string; replacement: string }>()
+  const [addingEntity, setAddingEntity] = useState(false)
+  const [addType, setAddType] = useState('')
+  const [addOriginal, setAddOriginal] = useState('')
+  const [addReplacement, setAddReplacement] = useState('')
+  const [addError, setAddError] = useState(false)
   useEffect(() => {
     const cancel = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') controller.cancelSendReview()
@@ -707,53 +885,153 @@ function SendReviewView({ controller, review, t }: {
     window.addEventListener('keydown', cancel)
     return () => { window.removeEventListener('keydown', cancel) }
   }, [controller, review.id])
+  useEffect(() => {
+    setEditingKey(undefined)
+    setEditValue('')
+  }, [review.id])
+  useEffect(() => {
+    if (unprotectFinding === undefined) return
+    if (window.confirm(t('review.unprotectMessage'))) {
+      controller.setSendReviewFinding(unprotectFinding.key, false)
+      setUndoFinding(unprotectFinding)
+    }
+    setUnprotectFinding(undefined)
+  }, [controller, t, unprotectFinding])
   const findings = review.parts.flatMap((part, partIndex) => (
     part.result.findings.map(finding => ({ finding, partIndex, key: reviewFindingKey(partIndex, finding.id) }))
   ))
+  const cancelledIds = new Set(findings.filter(item => review.redactByFinding[item.key] === false).map(item => item.finding.id))
+  const activeFindings = findings
   const kept = findings.filter(item => review.redactByFinding[item.key] === false).length
+  const detector = review.parts[0] === undefined ? undefined : detectorSummary(review.parts[0].result, t)
   return (
     <div className={css.sendReview}>
-      <div className={css.reviewHeading}>
-        <span className={css.reviewShield}><ShieldIcon size={20} /></span>
-        <div><h3>{t('review.title')}</h3><p>{t('review.desc')}</p></div>
+      <div className={css.reviewMonitorHeading}>
+        <div>
+          <h3>{t('review.monitorTitle')}</h3>
+          <span>{`${t('audit.method')}：${detector ?? t('review.manual')}`}</span>
+        </div>
+        <span>{`${t('audit.completed')} · ${String(findings.length)}${t('audit.findingsUnit')}`}</span>
       </div>
-      <div className={css.reviewSummary}>
-        <strong>{`${String(findings.length)} ${t('review.items')}`}</strong>
-        <span className={css.riskBadge} data-risk="critical">{t('risk.critical')}</span>
+      <div className={css.reviewEntitiesHeading}>
+        <strong>{`${t('review.items')}（${String(activeFindings.length)}）`}</strong>
+        <button className={css.reviewAddButton} type="button" title={t('review.addEntity')}
+          aria-label={t('review.addEntity')} onClick={() => { setAddingEntity(true); setAddError(false) }}>
+          <LucideIcon icon={Plus} size={18} />
+        </button>
       </div>
-      <div className={css.reviewFindings}>{findings.map(({ finding, key }) => (
-        <article className={css.reviewFinding} key={key}>
+      <div className={css.reviewFindings}>{activeFindings.map(({ finding, partIndex, key }) => {
+        const original = review.parts[partIndex]?.text.slice(finding.start, finding.end) ?? finding.maskedEvidence
+        const replacement = review.replacementByFinding[key] ?? finding.replacement
+        const keptFinding = review.redactByFinding[key] === false
+        return (
+        <article className={css.reviewFinding} data-cancelled={keptFinding || undefined} key={key}>
           <div className={css.reviewFindingText}>
-            <div className={css.reviewFindingTitle}>
-              <strong>{findingTypeLabel(finding, t)}</strong>
-              <span data-risk={finding.severity}>{t(RISK_KEYS[finding.severity])}</span>
+            <div className={css.reviewEntityLine}>
+              <span className={css.reviewEntityTag}>{findingTypeLabel(finding, t)}</span>
+              <code className={css.reviewOriginal}>{original}</code>
+              <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+              <code className={css.reviewReplacement}>{replacement || '—'}</code>
             </div>
-            <code>{finding.maskedEvidence}</code>
-            <small>{finding.ruleName === undefined
-              ? t('review.model')
-              : `${t('review.rule')}: ${ruleDisplayName(finding.ruleId, finding.entityType, finding.ruleName, t)}`}</small>
           </div>
-          <div className={css.disposition}>
-            <button type="button" data-selected={review.redactByFinding[key] !== false || undefined}
-              onClick={() => { controller.setSendReviewFinding(key, true) }}>{t('review.redact')}</button>
-            <button type="button" data-selected={review.redactByFinding[key] === false || undefined}
-              onClick={() => { controller.setSendReviewFinding(key, false) }}>{t('review.keep')}</button>
-          </div>
+          {editingKey === key ? (
+            <div className={css.reviewEdit}>
+              <input
+                aria-label={`${t('review.editLabel')}: ${findingTypeLabel(finding, t)}`}
+                value={editValue}
+                onChange={event => { setEditValue(event.target.value) }}
+                autoFocus
+              />
+              <div className={css.reviewEditActions}>
+                <button type="button" onClick={() => {
+                  controller.setSendReviewReplacement(key, editValue)
+                  controller.setSendReviewFinding(key, true)
+                  setEditingKey(undefined)
+                }}>{t('review.saveEdit')}</button>
+                <button type="button" onClick={() => { setEditingKey(undefined) }}>{t('review.cancelEdit')}</button>
+              </div>
+            </div>
+          ) : (
+            <div className={css.reviewFindingActions}>
+              <button className={css.reviewIconButton} type="button" title={t('review.edit')}
+                aria-label={t('review.edit')} onClick={() => {
+                setEditingKey(key)
+                setEditValue(replacement)
+              }}><LucideIcon icon={Pencil} size={16} /></button>
+              <button className={css.reviewIconButton} type="button"
+                title={keptFinding ? t('review.redact') : t('review.keep')}
+                aria-label={keptFinding ? t('review.redact') : t('review.keep')}
+                data-selected={keptFinding || undefined}
+                onClick={() => {
+                  if (keptFinding) controller.setSendReviewFinding(key, true)
+                  else setUnprotectFinding({ key, original, replacement })
+                }}>
+                {keptFinding ? <LucideIcon icon={Check} size={17} /> : <LucideIcon icon={X} size={17} />}
+              </button>
+            </div>
+          )}
         </article>
-      ))}</div>
-      <section className={css.reviewPreview}>
-        <strong>{t('review.preview')}</strong>
+        )
+      })}</div>
+      {addingEntity ? (
+        <div className={css.reviewAddForm}>
+          <strong>{t('review.addTitle')}</strong>
+          <input value={addType} placeholder={t('review.entityTypePlaceholder')} maxLength={40}
+            onChange={event => { setAddType(event.target.value); setAddError(false) }} />
+          <div className={css.reviewAddValues}>
+            <input value={addOriginal} placeholder={t('review.originalPlaceholder')}
+              onChange={event => { setAddOriginal(event.target.value); setAddError(false) }} />
+            <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+            <input value={addReplacement} placeholder={t('review.replacementPlaceholder')}
+              onChange={event => { setAddReplacement(event.target.value); setAddError(false) }} />
+          </div>
+          {addError ? <small className={css.reviewAddError}>{t('review.addError')}</small> : null}
+          <div className={css.reviewAddActions}>
+            <button type="button" onClick={() => { setAddingEntity(false) }}>{t('review.cancelEdit')}</button>
+            <button type="button" onClick={() => {
+              const added = controller.addSendReviewFinding(addOriginal, addReplacement, addType)
+              if (!added) { setAddError(true); return }
+              setAddingEntity(false)
+              setAddType('')
+              setAddOriginal('')
+              setAddReplacement('')
+            }}>{t('review.add')}</button>
+          </div>
+        </div>
+      ) : null}
+      {undoFinding !== undefined ? (
+        <div className={css.reviewUndoBar}>
+          <span>{t('review.undoDone').replace('{value}', undoFinding.original)}</span>
+          <button type="button" onClick={() => {
+            controller.setSendReviewReplacement(undoFinding.key, undoFinding.replacement)
+            controller.setSendReviewFinding(undoFinding.key, true)
+            setUndoFinding(undefined)
+          }}>{t('review.undo')}</button>
+        </div>
+      ) : null}
+      <section className={css.reviewStages}>
         {review.parts.map((part, index) => (
-          <pre key={index}>{reviewPreview(part.text, part.result, index, review.redactByFinding)}</pre>
+          <div className={css.reviewStage} key={`input-${index}`}>
+            <h4>{t('review.currentInput')}</h4>
+            <div className={css.reviewStageCard}><HighlightedText text={part.text} findings={part.result.findings} cancelled={cancelledIds} t={t} /></div>
+          </div>
+        ))}
+        {review.parts.map((part, index) => (
+          <div className={css.reviewStage} key={`output-${index}`}>
+            <h4>{t('review.redactedOutput')}</h4>
+            <div className={css.reviewStageCard}><pre>{reviewPreview(
+              part.text, part.result, index, review.redactByFinding, review.replacementByFinding,
+            )}</pre></div>
+          </div>
         ))}
       </section>
       {kept > 0 ? <p className={css.reviewWarning}>{t('review.keptWarning')}</p> : null}
       <div className={css.reviewActions}>
         <button className={css.secondaryButton} type="button" onClick={() => { controller.cancelSendReview() }}>
-          {t('review.cancel')}
+          {t('review.cancelSend')}
         </button>
         <button className={css.primaryButton} type="button" onClick={() => { controller.confirmSendReview() }}>
-          {kept > 0 ? t('review.confirmKeep').replace('{count}', String(kept)) : t('review.confirm')}
+          {t('review.confirmSend')}
         </button>
       </div>
     </div>
@@ -766,9 +1044,9 @@ function ModelView({ controller, snapshot, t }: {
   t: PrivacyDrawerProps['t']
 }): ReactNode {
   const rows: Array<[DetectorMode, PrivacyKey, PrivacyKey]> = [
+    ['zeroclave', 'model.zeroclave', 'model.zeroclaveDesc'],
     ['regex', 'model.regex', 'model.regexDesc'],
     ['embedded', 'model.embedded', 'model.embeddedDesc'],
-    ['zeroclave', 'model.zeroclave', 'model.zeroclaveDesc'],
   ]
   const statusKey = (mode: DetectorMode): PrivacyKey => {
     const status = snapshot.detectorStates[mode].status
@@ -782,6 +1060,7 @@ function ModelView({ controller, snapshot, t }: {
   const embeddedState = snapshot.detectorStates.embedded
   const zeroClaveState = snapshot.detectorStates.zeroclave
   const showTelemetry = snapshot.telemetry.availability === 'available' || snapshot.telemetry.consent
+  const [telemetryDetailsOpen, setTelemetryDetailsOpen] = useState(false)
   return (
     <div className={css.tabPage}>
       <h3>{t('model.title')}</h3>
@@ -790,7 +1069,7 @@ function ModelView({ controller, snapshot, t }: {
         <div><strong>{t('policy.title')}</strong><small>{t('policy.desc')}</small></div>
         <div className={css.policyOptions}>
           {([
-            ['review-critical', 'policy.review', 'policy.reviewDesc'],
+            ['review-manual', 'policy.review', 'policy.reviewDesc'],
             ['auto-redact', 'policy.auto', 'policy.autoDesc'],
           ] as const).map(([policy, title, description]) => (
             <button type="button" key={policy} data-selected={snapshot.sendPolicy === policy || undefined}
@@ -812,7 +1091,15 @@ function ModelView({ controller, snapshot, t }: {
               onClick={() => { controller.setDetectorMode(mode) }}
             >
               <span className={css.radioMark} />
-              <span><strong>{t(title)}</strong><small>{t(description)}</small></span>
+              <span>
+                <span className={css.modelName}>
+                  <strong>{t(title)}</strong>
+                  {mode === 'zeroclave'
+                    ? <span className={css.recommendedBadge}>{t('model.recommended')}</span>
+                    : null}
+                </span>
+                <small>{t(description)}</small>
+              </span>
               <em>
                 {t(statusKey(mode))}
                 {mode === 'embedded' && embeddedState.status === 'loading' && embeddedState.progress !== undefined
@@ -867,48 +1154,49 @@ function ModelView({ controller, snapshot, t }: {
         </div>
       ) : null}
       {snapshot.detectorMode === 'zeroclave'
-        ? <><p className={css.gatewayNotice}>{t('model.gatewayNotice')}</p>
-          <p className={css.modelNote}>{t('model.textOnly')}</p></>
+        ? <p className={css.modelNote}>{t('model.textOnly')}</p>
         : null}
-      <p className={css.modelNote}>{t('model.fallback')}</p>
       {snapshot.detectorMode === 'embedded'
-        ? <p className={css.modelNote}>{t('model.limitation')}</p>
+        ? <p className={css.modelNote}>{t('model.embeddedNotice')}</p>
         : null}
       {showTelemetry ? <section className={css.telemetrySection}>
         <div className={css.telemetryHeading}>
-          <div><strong>{t('telemetry.title')}</strong><small>{t('telemetry.summary')}</small></div>
-        </div>
-        <p>{t('telemetry.detail')}</p>
-        <p>{snapshot.telemetry.lockedByGpc ? t('telemetry.gpc') : t('telemetry.network')}</p>
-        <div className={css.telemetryControl}>
-          <strong className={css.telemetryConsent}>{t('telemetry.consent')}</strong>
-          <div className={css.telemetryToggle}>
-            <SwitchControl
-              checked={snapshot.telemetry.consent}
-              label={t('telemetry.consent')}
-              disabled={snapshot.telemetry.availability !== 'available' || snapshot.telemetry.lockedByGpc}
-              onChange={(consent) => { controller.setTelemetryConsent(consent) }}
-            />
-            <em>{snapshot.telemetry.availability === 'checking'
-              ? t('telemetry.checking')
-              : snapshot.telemetry.lockedByGpc
-                ? t('telemetry.off')
-                : snapshot.telemetry.availability === 'unavailable'
-                  ? t('telemetry.unavailable')
-                  : snapshot.telemetry.consent ? t('telemetry.on') : t('telemetry.off')}</em>
+          <div>
+            <strong>{t('telemetry.title')}</strong>
+            <div className={css.telemetrySubline}>
+              <small>{t('telemetry.summary')}</small>
+              <button className={css.telemetryDetailsLink} type="button"
+                aria-expanded={telemetryDetailsOpen}
+                onClick={() => { setTelemetryDetailsOpen(open => !open) }}>
+                {t('telemetry.detailsLink')}
+                <LucideIcon icon={telemetryDetailsOpen ? ChevronUp : ChevronDown} size={16} />
+              </button>
+            </div>
           </div>
+          <SwitchControl
+            checked={snapshot.telemetry.consent}
+            label={t('telemetry.consent')}
+            disabled={snapshot.telemetry.availability !== 'available' || snapshot.telemetry.lockedByGpc}
+            onChange={(consent) => { controller.setTelemetryConsent(consent) }}
+          />
         </div>
+        {telemetryDetailsOpen ? <div className={css.telemetryDetails}>
+          <p>{t('telemetry.detailParagraph1')}</p>
+          <p>{t('telemetry.detailParagraph2')}</p>
+          <p>{t('telemetry.detailParagraph3')}</p>
+        </div> : null}
       </section> : null}
     </div>
   )
 }
 
-export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps): ReactNode {
+export function PrivacyDrawer({ controller, t, useSessions, sessions, conversation }: PrivacyDrawerProps): ReactNode {
   const snapshot = usePrivacy(controller)
   const drawerBodyRef = useRef<HTMLDivElement>(null)
   const sessionId = useSessions(state => state.current)
   const live = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
   const records = sessionId === undefined ? [] : snapshot.sendRecordsBySession.get(sessionId) ?? []
+  const [sending, setSending] = useState(false)
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
     ['audit', 'tab.audit'],
     ['model', 'tab.model'],
@@ -968,8 +1256,32 @@ export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps
           ? <ModelView controller={controller} snapshot={snapshot} t={t} /> : null}
       </div>
       {snapshot.pendingSendReview === undefined ? <footer className={css.drawerFooter}>
-        <span><i />{t('footer.core')}</span>
-        <button type="button" onClick={() => { controller.setTab('model') }}>{t('footer.configure')} →</button>
+        {snapshot.activeTab === 'audit' && live?.result.findings.length !== 0 && sessionId !== undefined ? (
+          <div className={css.drawerSendActions}>
+            <button className={css.secondaryButton} type="button" onClick={() => { controller.setOpen(false) }}>
+              {t('review.cancelSend')}
+            </button>
+            <button className={css.primaryButton} type="button" disabled={sending}
+              onClick={() => {
+                const session = sessions.binding(sessionId)?.session
+                if (session === undefined || live === undefined) return
+                setSending(true)
+                const sendSession = (conversation as {
+                  sendSession?: (target: object, text: string, attachments: readonly string[], mode: 'queue') => Promise<unknown>
+                }).sendSession
+                if (sendSession === undefined) { setSending(false); return }
+                void sendSession.call(conversation, session, live.text, [], 'queue').finally(() => { setSending(false) })
+              }}>
+              {t('review.confirmSend')}
+            </button>
+          </div>
+        ) : null}
+        <div className={css.drawerFooterMeta}>
+          <a className={css.communityLink} href="https://zeroclave.com/community" target="_blank" rel="noreferrer">
+            <i />{t('footer.core')}
+          </a>
+          <button type="button" onClick={() => { controller.setTab('model') }}>{t('footer.configure')} →</button>
+        </div>
       </footer> : null}
     </aside>
   )

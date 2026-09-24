@@ -62,6 +62,7 @@ export interface PrivacyFinding {
   end: number
   maskedEvidence: string
   replacement: string
+  sendReplacement?: string
   confidence?: number
   severity: Exclude<RiskLevel, 'none'>
   detector: DetectorMode
@@ -71,13 +72,14 @@ export interface PrivacyFinding {
   sourceType?: string
 }
 
-export type SendPolicy = 'auto-redact' | 'review-critical'
+export type SendPolicy = 'auto-redact' | 'review-manual'
 
 export interface PendingSendReview {
   id: string
   sessionId: string
   parts: readonly { text: string; result: ScanResult }[]
   redactByFinding: Readonly<Record<string, boolean>>
+  replacementByFinding: Readonly<Record<string, string>>
 }
 
 export interface PolicySignal {
@@ -131,6 +133,7 @@ export interface PrivacyLiveState {
   text: string
   result: ScanResult
   updatedAt: number
+  durationMs?: number
 }
 
 export interface SendRecord {
@@ -143,6 +146,14 @@ export interface SendRecord {
   policySignalCount: number
   detectors: readonly DetectorMode[]
   fallbackUsed: boolean
+  replacements: readonly SendReplacementRecord[]
+}
+
+export interface SendReplacementRecord {
+  entityType: EntityType
+  original: string
+  replacement: string
+  action: 'redacted' | 'kept'
 }
 
 export interface PrivacySnapshot {

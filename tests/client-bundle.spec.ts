@@ -38,7 +38,7 @@ describe('built DSH client bundle', () => {
       return modules.get(specifier)
     })
 
-    expect(plugin.inject).toEqual(['slots', 'locale', 'conversation'])
+    expect(plugin.inject).toEqual(['slots', 'locale', 'conversation', 'sessions'])
     expect(plugin.apply).toBeTypeOf('function')
     expect(document.querySelector(`style[data-plugin=${JSON.stringify(PLUGIN_ID)}]`)).not.toBeNull()
   })

@@ -17,7 +17,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-export const inject = ['slots', 'locale', 'conversation']
+export const inject = ['slots', 'locale', 'conversation', 'sessions']
 
 export function apply(ctx: ClientContext): void {
   const controller = new PrivacyController()
@@ -56,6 +56,6 @@ export function apply(ctx: ClientContext): void {
     id: 'zeroclave-privacy',
     order: 10,
     locale: NS,
-    inject: () => ({ controller }),
+    inject: () => ({ controller, sessions: ctx.sessions, conversation: ctx.conversation }),
   }, PrivacyDrawer))
 }

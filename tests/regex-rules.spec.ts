@@ -54,6 +54,7 @@ describe('editable regex rules', () => {
     const execute = vi.fn(async (text: string): Promise<RegexMatch[]> => executeRegexBatch(text, [customRule]))
     const controller = new PrivacyController(new PrivacyVault(memoryStore()), execute)
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     controller.saveRule(customRule)
     const text = '员工编号：EMP-2048'
     await controller.inspect('s1', text)

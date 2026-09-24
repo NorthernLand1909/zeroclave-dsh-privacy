@@ -15,11 +15,11 @@ An experimental, local-first privacy plugin for the DeepSeek Harness Web UI.
 - Shows the detector source on every finding and keeps the latest ten summary-only send records per DSH session.
 - Shows the current findings, redacted preview, and session send activity in one DSH detection view.
 - Supports the anonymous ZeroClave Gateway detector through a same-origin DSH Host proxy, with no API key.
-- Offers privacy-preserving product telemetry as an explicit opt-in, disabled by default.
+- Offers privacy-preserving product telemetry, enabled by default when configured and always user-disableable.
 
 With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan, a partial ZeroClave result, or a mapping write failure prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
 
-The default send policy pauses a message containing critical findings before Host admission. The review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Detection settings**.
+The default send policy pauses a message containing sensitive findings before Host admission. The manual review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value or edit its redacted replacement for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Entity detection**.
 
 Session activity contains only time, counts, highest risk, detector modes, and fallback status. It stores no draft, finding, evidence, replacement, or redacted text, and disappears when the page reloads.
 
@@ -43,10 +43,9 @@ The target Gateway must publish the anonymous `POST /v1/pii/detect` route and en
 
 ## Optional product telemetry
 
-Browser telemetry consent is off by default and must be enabled explicitly in
-**Detection settings**. Global Privacy Control forces it off. The marketplace
-bundle makes the Host relay capability available, but that relay sends nothing
-until the browser user opts in. Administrators can disable the capability with
+Browser telemetry is on by default when configured, and **Detection settings**
+always provides an explicit opt-out. Global Privacy Control forces it off. The
+marketplace bundle makes the Host relay capability available. Administrators can disable the capability with
 `telemetryEnabled: false`.
 
 Marketplace installations use the Plausible Events API. The same-origin DSH
@@ -63,8 +62,9 @@ telemetrySite: zeroclave-dsh-privacy
 telemetryTimeoutMs: 2000
 ```
 
-Here `telemetryEnabled` means only that the consent control can be offered; it
-does not grant browser consent. For the official deployment, configure HMAC
+Here `telemetryEnabled` controls whether the telemetry capability is offered;
+the browser defaults to consent unless the user has opted out or GPC is active.
+For the official deployment, configure HMAC
 plus the loopback receiver explicitly with `telemetryProvider: zeroclave`:
 
 ```yaml
@@ -151,7 +151,7 @@ self-contained.
 - Display restoration is limited to visible message prose. Markdown destinations, code, attachment metadata, paths, identifiers, and tool payloads retain placeholders.
 - Old `__PII_*__` messages from releases through alpha.5 have no durable restoration map. Unknown placeholders are preserved; the plugin cannot reconstruct their originals.
 - ZeroClave requests are visible in the detection settings, expose connection errors, and use a longer draft debounce. Service failures and incomplete results block sending instead of being interpreted as no findings.
-- Product telemetry is separately opt-in, defaults off in the browser, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, but sends nothing without consent. Alibaba Cloud ESA processes the allowlisted event body and connection metadata while forwarding it, and public events can be fabricated, so metrics are approximate only.
+- Product telemetry is enabled by default when configured, remains user-disableable, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, and public events can be fabricated, so metrics are approximate only.
 
 ## Known Limitations and Deferred Work
 
