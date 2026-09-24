@@ -80,6 +80,7 @@
     "vitest": "^4.1.8"
   },
   "files": [
+    "plugin.json",
     "cordis.patch.yml",
     "lib/index.js",
     "lib/client.js",

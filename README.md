@@ -203,7 +203,7 @@ DSH_REPO="$PWD" pnpm --filter '@zeroclave/dsh-privacy' exec node \
   packages/experimental/zeroclave-privacy/tests/browser-smoke.mjs
 ```
 
-生成可安装包：
+生成 npm/DSH 命令行安装包：
 
 ```bash
 pnpm --filter '@zeroclave/dsh-privacy' pack --pack-destination ./artifacts
@@ -211,7 +211,22 @@ node packages/experimental/zeroclave-privacy/scripts/audit-package.mjs artifacts
 shasum -a 256 artifacts/*.tgz
 ```
 
-GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试、Chrome smoke test 和安装包审计。push 和手动运行会上传带 SHA-256 校验文件的 `.tgz` artifact。
+DeepSeek Stream 上传页只接受标准 `.zip`。CI 会另外生成一个 ZIP，顶层包含单一插件目录以及 `plugin.json`、`package.json`、`cordis.patch.yml`、`README.md`、`LICENSE` 和 `lib/`：
+
+```bash
+rm -rf stream-package
+mkdir -p stream-package/zeroclave-dsh-privacy/lib/types
+cp plugin.json package.json cordis.patch.yml README.md LICENSE \
+  stream-package/zeroclave-dsh-privacy/
+cp lib/client.js lib/index.js stream-package/zeroclave-dsh-privacy/lib/
+rsync -a --include='*/' --include='*.d.ts' --exclude='*' \
+  lib/types/ stream-package/zeroclave-dsh-privacy/lib/types/
+(cd stream-package && zip -qr ../zeroclave-dsh-privacy.zip zeroclave-dsh-privacy)
+```
+
+从 GitHub Actions 的 artifact 中下载 `zeroclave-dsh-privacy-<commit>.zip`，直接上传到 [DeepSeek Stream 插件发布页](https://deepseek.stream/upload)。上传页要求插件压缩包为 ZIP，并在包内提供标准清单文件；不要上传 `.tgz`。
+
+GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试、Chrome smoke test 和安装包审计。push 和手动运行会上传 `.tgz`、Stream 用 `.zip` 以及对应的 SHA-256 校验文件。
 
 ## 本地安装到 DSH
 

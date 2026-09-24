@@ -118,8 +118,32 @@ jobs:
           pnpm --dir "$GITHUB_WORKSPACE/harness" --filter '@zeroclave/dsh-privacy' pack \
             --pack-destination "$GITHUB_WORKSPACE/artifacts"
           node "$GITHUB_WORKSPACE/plugin/scripts/audit-package.mjs" "$GITHUB_WORKSPACE"/artifacts/*.tgz
+          test "$(node -p "require('$GITHUB_WORKSPACE/plugin/package.json').version")" = \
+            "$(node -p "require('$GITHUB_WORKSPACE/plugin/plugin.json').version")"
           cd "$GITHUB_WORKSPACE/artifacts"
           sha256sum -- *.tgz > "$(basename "$(find . -maxdepth 1 -name '*.tgz' -print -quit)").sha256"
+          zip_root="$RUNNER_TEMP/zeroclave-dsh-privacy"
+          rm -rf "$zip_root"
+          mkdir -p "$zip_root/zeroclave-dsh-privacy"
+          cp "$GITHUB_WORKSPACE/plugin/plugin.json" \
+            "$GITHUB_WORKSPACE/plugin/package.json" \
+            "$GITHUB_WORKSPACE/plugin/cordis.patch.yml" \
+            "$GITHUB_WORKSPACE/plugin/README.md" \
+            "$GITHUB_WORKSPACE/plugin/LICENSE" \
+            "$zip_root/zeroclave-dsh-privacy/"
+          mkdir -p "$zip_root/zeroclave-dsh-privacy/lib/types"
+          cp "$GITHUB_WORKSPACE/harness/packages/experimental/zeroclave-privacy/lib/client.js" \
+            "$GITHUB_WORKSPACE/harness/packages/experimental/zeroclave-privacy/lib/index.js" \
+            "$zip_root/zeroclave-dsh-privacy/lib/"
+          rsync -a --include='*/' --include='*.d.ts' --exclude='*' \
+            "$GITHUB_WORKSPACE/harness/packages/experimental/zeroclave-privacy/lib/types/" \
+            "$zip_root/zeroclave-dsh-privacy/lib/types/"
+          (cd "$zip_root" && zip -qr "$GITHUB_WORKSPACE/artifacts/zeroclave-dsh-privacy-${GITHUB_SHA}.zip" zeroclave-dsh-privacy)
+          unzip -Z1 "$GITHUB_WORKSPACE/artifacts/zeroclave-dsh-privacy-${GITHUB_SHA}.zip" \
+            | grep -Fxq 'zeroclave-dsh-privacy/plugin.json'
+          unzip -Z1 "$GITHUB_WORKSPACE/artifacts/zeroclave-dsh-privacy-${GITHUB_SHA}.zip" \
+            | grep -Fxq 'zeroclave-dsh-privacy/lib/client.js'
+          sha256sum -- *.zip > "$(basename "$(find . -maxdepth 1 -name '*.zip' -print -quit)").sha256"
 
       - name: Upload installable package
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
@@ -128,6 +152,7 @@ jobs:
           name: zeroclave-dsh-privacy-${{ github.sha }}
           path: |
             artifacts/*.tgz
+            artifacts/*.zip
             artifacts/*.sha256
           if-no-files-found: error
           compression-level: 0
