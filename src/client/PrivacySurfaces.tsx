@@ -838,7 +838,7 @@ function SendReviewView({ controller, review, t }: {
   const kept = findings.filter(item => review.redactByFinding[item.key] === false).length
   const detector = review.parts[0] === undefined ? undefined : detectorSummary(review.parts[0].result, t)
   return (
-    <div className={css.sendReview}>
+    <div className={css.detectionView} data-review-surface>
       <div className={css.reviewMonitorHeading}>
         <div>
           <h3>{t('review.monitorTitle')}</h3>
