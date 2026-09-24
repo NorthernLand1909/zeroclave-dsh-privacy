@@ -19,11 +19,8 @@ export interface Config {
   timeoutMs: number
   telemetryProvider: 'zeroclave' | 'plausible'
   telemetryEnabled: boolean
-  telemetryAuthMode: 'anonymous' | 'hmac'
   telemetryEndpoint: string
   telemetrySite: string
-  telemetryKeyId: string
-  telemetrySecretEnv: string
   telemetryTimeoutMs: number
 }
 
@@ -32,11 +29,8 @@ export const Config: z<Config> = z.object({
   timeoutMs: z.number().min(100).max(30_000).default(15_000),
   telemetryProvider: z.union(['zeroclave', 'plausible'] as const).default('zeroclave'),
   telemetryEnabled: z.boolean().default(false),
-  telemetryAuthMode: z.union(['anonymous', 'hmac'] as const).default('anonymous'),
   telemetryEndpoint: z.string().default('https://telemetry.zeroclave.ai'),
   telemetrySite: z.string().min(1).max(128).default('zeroclave-dsh-privacy'),
-  telemetryKeyId: z.string().default('dsh-prod-1'),
-  telemetrySecretEnv: z.string().default('ZEROCLAVE_TELEMETRY_HMAC_SECRET'),
   telemetryTimeoutMs: z.number().min(100).max(10_000).default(2_000),
 })
 
@@ -47,22 +41,15 @@ export function apply(ctx: Context, config: Config): void {
     path: ZEROCLAVE_DETECT_PROXY_PATH,
     handler,
   }), 'zeroclave-privacy: anonymous detection proxy')
-  const hmacMode = config.telemetryAuthMode === 'hmac'
-  const secretEnvValid = !hmacMode || /^[A-Z_][A-Z0-9_]*$/u.test(config.telemetrySecretEnv)
-  const secret = hmacMode && secretEnvValid ? process.env[config.telemetrySecretEnv] : undefined
-  const keyIdValid = !hmacMode || /^[A-Za-z0-9_.-]{1,64}$/u.test(config.telemetryKeyId)
   const telemetry = createTelemetryHandlers({
     enabled: config.telemetryEnabled,
     provider: config.telemetryProvider,
     site: config.telemetrySite,
-    authMode: config.telemetryAuthMode,
     endpoint: config.telemetryEndpoint,
-    keyId: config.telemetryKeyId,
-    secret,
     timeoutMs: config.telemetryTimeoutMs,
     pluginVersion: version,
   })
-  if (config.telemetryEnabled && (!secretEnvValid || !keyIdValid || !telemetry.active)) {
+  if (config.telemetryEnabled && !telemetry.active) {
     ctx.logger.warn('zeroclave-privacy: telemetry is enabled but its Host configuration is invalid')
   }
   ctx.effect(() => ctx.webServer.register({

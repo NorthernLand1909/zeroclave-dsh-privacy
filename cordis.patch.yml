@@ -6,7 +6,6 @@
         timeoutMs: 15000
         telemetryProvider: plausible
         telemetryEnabled: true
-        telemetryAuthMode: anonymous
         telemetryEndpoint: https://plausible.io/api/event
         telemetrySite: zeroclave-dsh-privacy
         telemetryTimeoutMs: 2000

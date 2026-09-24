@@ -1,15 +1,12 @@
-import { createHash, createHmac, randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export const TELEMETRY_CONFIG_PATH = '/api/zeroclave-privacy/telemetry/config'
 export const TELEMETRY_EVENTS_PATH = '/api/zeroclave-privacy/telemetry/events'
 export const MAX_TELEMETRY_BODY_BYTES = 512
 
-export type TelemetryAuthMode = 'anonymous' | 'hmac'
 export type TelemetryProvider = 'zeroclave' | 'plausible'
 
 const DAILY_ID = /^[A-Za-z0-9_-]{22}$/u
-const KEY_ID = /^[A-Za-z0-9_.-]{1,64}$/u
 const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u
 const DETECTORS = new Set(['regex', 'embedded', 'zeroclave'])
 const EVENTS = new Set(['privacy_active', 'protected_send', 'detector_used'])
@@ -19,10 +16,7 @@ export interface TelemetryProxyConfig {
   enabled: boolean
   provider?: TelemetryProvider
   site?: string
-  authMode: TelemetryAuthMode
   endpoint: string
-  keyId: string
-  secret: string | undefined
   timeoutMs: number
   pluginVersion: string
 }
@@ -39,8 +33,6 @@ type BrowserEvent = BrowserEventBase & (
 
 interface TelemetryProxyInternals {
   fetch: typeof fetch
-  now: () => number
-  randomBytes: (length: number) => Buffer
 }
 
 class BodyTooLargeError extends Error {}
@@ -53,7 +45,7 @@ function isLoopback(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
-function telemetryURL(value: string, provider: TelemetryProvider, authMode: TelemetryAuthMode): string {
+function telemetryURL(value: string, provider: TelemetryProvider): string {
   const url = new URL(value)
   const hasQuery = url.href.includes('?')
   const hasFragment = url.href.includes('#')
@@ -66,9 +58,8 @@ function telemetryURL(value: string, provider: TelemetryProvider, authMode: Tele
     }
     return url.toString()
   }
-  const hmacLoopback = authMode === 'hmac' && url.protocol === 'http:' && isLoopback(url.hostname)
-  if (url.protocol !== 'https:' && !hmacLoopback) {
-    throw new Error('Telemetry endpoint must use HTTPS unless HMAC targets loopback')
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopback(url.hostname))) {
+    throw new Error('Telemetry endpoint must use HTTPS unless it targets loopback')
   }
   if (url.username !== '' || url.password !== '' || hasQuery || hasFragment) {
     throw new Error('Telemetry endpoint must not contain credentials, query parameters, or a fragment')
@@ -155,7 +146,7 @@ function parseEvent(body: Buffer): BrowserEvent {
 
 export function createTelemetryHandlers(
   config: TelemetryProxyConfig,
-  internals: TelemetryProxyInternals = { fetch, now: Date.now, randomBytes },
+  internals: TelemetryProxyInternals = { fetch },
 ): {
   active: boolean
   config: (req: IncomingMessage, res: ServerResponse) => void
@@ -163,24 +154,16 @@ export function createTelemetryHandlers(
 } {
   const provider = config.provider ?? 'zeroclave'
   const site = config.site ?? 'zeroclave-dsh-privacy'
-  const secret = config.secret
   let endpoint: string | undefined
-  if (config.enabled && (provider === 'plausible' || config.authMode === 'anonymous' || config.authMode === 'hmac')
-    && (provider !== 'plausible' || config.authMode === 'anonymous')
-    && (provider !== 'plausible' || PLAUSIBLE_SITE.test(site))
+  if (config.enabled && (provider !== 'plausible' || PLAUSIBLE_SITE.test(site))
     && VERSION.test(config.pluginVersion)) {
-    try { endpoint = telemetryURL(config.endpoint, provider, config.authMode) } catch { endpoint = undefined }
+    try { endpoint = telemetryURL(config.endpoint, provider) } catch { endpoint = undefined }
   }
   const destination = endpoint === undefined
     ? undefined
     : provider === 'plausible'
       ? { provider, endpoint, site }
-      : config.authMode === 'anonymous'
-        ? { provider, authMode: config.authMode, endpoint }
-      : secret !== undefined && secret.length >= 32 && !secret.startsWith('replace-with-')
-        && KEY_ID.test(config.keyId)
-        ? { provider, authMode: config.authMode, endpoint, secret }
-        : undefined
+      : { provider, endpoint }
   const active = destination !== undefined
 
   return {
@@ -249,15 +232,6 @@ export function createTelemetryHandlers(
       const headers: Record<string, string> = { 'content-type': 'application/json' }
       if (destination.provider === 'plausible') {
         headers['user-agent'] = 'ZeroClave-Telemetry/0.1'
-      } else if (destination.authMode === 'hmac') {
-        const timestamp = String(Math.floor(internals.now() / 1_000))
-        const nonce = internals.randomBytes(16).toString('base64url')
-        const bodyHash = createHash('sha256').update(outbound).digest('hex')
-        const canonical = `v1\nPOST\n/v1/events\n${timestamp}\n${nonce}\n${bodyHash}`
-        headers['x-zc-key-id'] = config.keyId
-        headers['x-zc-timestamp'] = timestamp
-        headers['x-zc-nonce'] = nonce
-        headers['x-zc-signature'] = createHmac('sha256', destination.secret).update(canonical).digest('hex')
       }
       const controller = new AbortController()
       let timedOut = false
