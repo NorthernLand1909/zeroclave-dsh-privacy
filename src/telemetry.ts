@@ -253,12 +253,18 @@ export interface TelemetryReporter {
   dispose(): Promise<void>
 }
 
+interface DirectPlausibleDestination {
+  endpoint: string
+  site: string
+}
+
 export class PrivacyTelemetry implements TelemetryReporter {
   private available = false
   private readonly lifetime = new AbortController()
   private consentOperation = new AbortController()
   private readonly inflight = new Map<string, Promise<void>>()
   private consentOverride: boolean | undefined
+  private directPlausible: DirectPlausibleDestination | undefined
   private consentListener: (consent: boolean) => void = () => undefined
   private readonly storage: Storage | undefined
   private readonly onStorage = (event: StorageEvent): void => {
@@ -302,10 +308,17 @@ export class PrivacyTelemetry implements TelemetryReporter {
         method: 'GET', credentials: 'same-origin', cache: 'no-store', referrerPolicy: 'no-referrer', signal: combined,
       })
       const body: unknown = await response.json()
-      this.available = response.ok && typeof body === 'object' && body !== null
-        && !Array.isArray(body) && (body as { enabled?: unknown }).enabled === true
+      const config = typeof body === 'object' && body !== null && !Array.isArray(body)
+        ? body as { enabled?: unknown; provider?: unknown; endpoint?: unknown; site?: unknown }
+        : undefined
+      this.directPlausible = config?.provider === 'plausible'
+        && typeof config.endpoint === 'string' && typeof config.site === 'string'
+        ? { endpoint: config.endpoint, site: config.site }
+        : undefined
+      this.available = response.ok && config?.enabled === true
     } catch {
       this.available = false
+      this.directPlausible = undefined
     }
     if (this.lockedByGpc) {
       this.consentOverride = false
@@ -380,18 +393,28 @@ export class PrivacyTelemetry implements TelemetryReporter {
       if (claim === undefined) return
       if (this.deliveryCancelled(consentSignal)) return
       const body = JSON.stringify({
-        schema_version: 1,
-        event,
-        daily_id: claim.dailyId,
-        ...(value === undefined ? {} : { value }),
+        ...(this.directPlausible === undefined
+          ? {
+              schema_version: 1,
+              event,
+              daily_id: claim.dailyId,
+              ...(value === undefined ? {} : { value }),
+            }
+          : {
+              domain: this.directPlausible.site,
+              name: event === 'detector_used' ? `detector_used_${value}` : event,
+              url: 'app://zeroclave-dsh-privacy/',
+            }),
       })
       const signal = AbortSignal.any([
         this.lifetime.signal, consentSignal, AbortSignal.timeout(2_000),
       ])
       try {
-        const response = await this.internals.fetch(EVENTS_PATH, {
+        const response = await this.internals.fetch(this.directPlausible?.endpoint ?? EVENTS_PATH, {
           method: 'POST',
-          credentials: 'same-origin',
+          ...(this.directPlausible === undefined ? { credentials: 'same-origin' as const } : {
+            mode: 'cors' as const, credentials: 'omit' as const,
+          }),
           cache: 'no-store',
           keepalive: true,
           referrerPolicy: 'no-referrer',

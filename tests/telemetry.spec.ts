@@ -167,6 +167,34 @@ describe('privacy-preserving telemetry reporter', () => {
     expect(store.dailyIds.size).toBe(1)
   })
 
+  it('sends Plausible events directly from the browser when the Host advertises the direct destination', async () => {
+    const store = new MemoryTelemetryStore()
+    const directEndpoint = 'https://plausible.io/api/event'
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = inputURL(input)
+      if (url === CONFIG_PATH) return Response.json({
+        enabled: true, provider: 'plausible', endpoint: directEndpoint, site: 'zeroclave-dsh-privacy',
+      })
+      if (url === directEndpoint) return new Response(null, { status: 202 })
+      throw new Error(`Unexpected URL: ${url}`)
+    })
+    const telemetry = makeTelemetry(store, fetchMock)
+
+    await expect(telemetry.initialize()).resolves.toBe('available')
+    telemetry.report('detector_used', 'regex')
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.filter(call => inputURL(call[0]) === directEndpoint)).toHaveLength(1)
+    })
+
+    const call = fetchMock.mock.calls.find(item => inputURL(item[0]) === directEndpoint)
+    if (call === undefined) throw new Error('Direct Plausible request missing')
+    expect(JSON.parse(requestBody(call))).toEqual({
+      domain: 'zeroclave-dsh-privacy', name: 'detector_used_regex', url: 'app://zeroclave-dsh-privacy/',
+    })
+    expect(call[1]?.mode).toBe('cors')
+    expect(call[1]?.credentials).toBe('omit')
+  })
+
   it('preserves an explicit opt-out across initialization', async () => {
     window.localStorage.setItem(CONSENT_KEY, 'false')
     const store = new MemoryTelemetryStore()

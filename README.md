@@ -89,7 +89,7 @@ https://zeroclave.com/v1/pii/detect
 
 ## 匿名使用统计
 
-遥测由 DSH Host 提供同源中继，浏览器只提交固定白名单事件：
+Plausible 模式下，浏览器直接向 Plausible Events API 提交固定白名单事件；Host 只提供配置发现接口。ZeroClave/HMAC 模式仍通过 DSH Host 中继：
 
 - `privacy_active`：是否执行了隐私检测；
 - `protected_send`：受保护的请求是否成功发送；
@@ -108,7 +108,7 @@ telemetrySite: zeroclave-dsh-privacy
 telemetryTimeoutMs: 2000
 ```
 
-用户可以在“检测设置”关闭“共享匿名使用统计”。浏览器的 Global Privacy Control（GPC）也会强制关闭该选项。Plausible 可能处理请求中的连接元数据，例如 IP 地址；插件不会主动发送文本或检测结果。
+用户可以在“检测设置”关闭“共享匿名使用统计”。浏览器的 Global Privacy Control（GPC）也会强制关闭该选项。Plausible 可能处理请求中的连接元数据，例如 IP 地址；插件不会主动发送文本或检测结果。浏览器请求使用 `credentials: omit`、`no-referrer` 和固定的 `app://zeroclave-dsh-privacy/` URL，不发送每日 ID。
 
 如果使用 ZeroClave 的 HMAC 遥测服务：
 

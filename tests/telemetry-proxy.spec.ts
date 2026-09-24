@@ -183,6 +183,13 @@ describe('telemetry Host proxy', () => {
       secret: undefined,
     }), { fetch: upstream, now: () => vector.timestamp, randomBytes: () => Buffer.alloc(16) })
 
+    const config = await invoke(handlers.config, { method: 'GET' })
+    expect(JSON.parse(config.body.toString('utf8'))).toEqual({
+      enabled: true,
+      provider: 'plausible',
+      endpoint: 'https://plausible.io/api/event',
+      site: 'zeroclave-dsh-privacy',
+    })
     const response = await invoke(handlers.events, {
       body: JSON.stringify({
         schema_version: 1,

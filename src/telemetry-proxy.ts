@@ -191,7 +191,12 @@ export function createTelemetryHandlers(
         sendJSON(res, 405, { error: { code: 'method_not_allowed', message: 'Use GET for this endpoint' } }, { allow: 'GET' })
         return
       }
-      sendJSON(res, 200, { enabled: active })
+      sendJSON(res, 200, {
+        enabled: active,
+        ...(active && destination?.provider === 'plausible'
+          ? { provider: 'plausible', endpoint: destination.endpoint, site: destination.site }
+          : {}),
+      })
     },
     events: async (req, res) => {
       if (req.method !== 'POST') {
