@@ -136,26 +136,6 @@ export interface PrivacyLiveState {
   durationMs?: number
 }
 
-export interface SendRecord {
-  id: string
-  updatedAt: number
-  overallRisk: RiskLevel
-  findingCount: number
-  redactedCount: number
-  keptCount: number
-  policySignalCount: number
-  detectors: readonly DetectorMode[]
-  fallbackUsed: boolean
-  replacements: readonly SendReplacementRecord[]
-}
-
-export interface SendReplacementRecord {
-  entityType: EntityType
-  original: string
-  replacement: string
-  action: 'redacted' | 'kept'
-}
-
 export interface PrivacySnapshot {
   enabled: boolean
   open: boolean
@@ -163,7 +143,6 @@ export interface PrivacySnapshot {
   detectorMode: DetectorMode
   detectorStates: Readonly<Record<DetectorMode, DetectorRuntimeState>>
   liveBySession: ReadonlyMap<string, PrivacyLiveState>
-  sendRecordsBySession: ReadonlyMap<string, readonly SendRecord[]>
   regexRules: readonly EditableRegexRule[]
   regexRevision: number
   regexError?: RegexErrorCode | undefined

@@ -19,8 +19,6 @@ export type PrivacyKey =
   | 'audit.policy' | 'audit.fallback' | 'audit.partial' | 'audit.partialNoFindings'
   | 'audit.gatewayFinding' | 'audit.modelFinding'
   | 'source.regex' | 'source.embedded' | 'source.zeroclave' | 'source.regexFallback' | 'source.combined'
-  | 'activity.title' | 'activity.sessionOnly' | 'activity.clear' | 'activity.sent'
-  | 'activity.redacted' | 'activity.kept' | 'activity.noDetails'
   | 'entity.AGE' | 'entity.EMAIL' | 'entity.PHONE' | 'entity.PERSON' | 'entity.ADDRESS'
   | 'entity.COORDINATE' | 'entity.HONORIFIC'
   | 'entity.ORGANIZATION' | 'entity.NATIONAL_ID' | 'entity.CREDIT_CODE'
@@ -123,13 +121,6 @@ export const zh: Record<PrivacyKey, string> = {
   'source.zeroclave': 'ZeroClave',
   'source.regexFallback': '正则回退',
   'source.combined': 'BERT + 正则',
-  'activity.title': '本次会话',
-  'activity.sessionOnly': '仅保留最近 10 次处理，刷新后清空',
-  'activity.clear': '清空本次会话记录',
-  'activity.sent': '已处理并发送',
-  'activity.redacted': '项脱敏',
-  'activity.kept': '项保留',
-  'activity.noDetails': '本次没有可展开的替换明细',
   'entity.AGE': '年龄',
   'entity.EMAIL': '邮箱',
   'entity.PHONE': '手机号',
@@ -327,13 +318,6 @@ export const en: Record<PrivacyKey, string> = {
   'source.zeroclave': 'ZeroClave',
   'source.regexFallback': 'Regex fallback',
   'source.combined': 'BERT + regex',
-  'activity.title': 'This session',
-  'activity.sessionOnly': 'Latest 10 processed sends; cleared on refresh',
-  'activity.clear': 'Clear session activity',
-  'activity.sent': 'Processed and sent',
-  'activity.redacted': 'redacted',
-  'activity.kept': 'kept',
-  'activity.noDetails': 'No replacement details for this send',
   'entity.AGE': 'Age',
   'entity.EMAIL': 'Email',
   'entity.PHONE': 'Phone',

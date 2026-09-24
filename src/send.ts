@@ -63,12 +63,8 @@ export function installSendRedaction(conversation: object, controller: PrivacyCo
           })
           signal?.throwIfAborted()
           const outcome = await target.prompt(outgoing, ...promptArgs)
-          const resultsSent = scanned.map(item => item.result)
           if (outcome.ok) {
             controller.reportTelemetry('protected_send')
-            if (resultsSent.some(result => result.findings.length > 0 || result.policySignals.length > 0)) {
-              controller.recordSend(target.sessionId, resultsSent, scanned)
-            }
           }
           return outcome
         }

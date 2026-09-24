@@ -9,7 +9,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { PrivacyController } from '../controller.ts'
 import type {
-  DetectorMode, PrivacyFinding, PrivacySnapshot, RiskLevel, ScanResult, SendRecord,
+  DetectorMode, PrivacyFinding, PrivacySnapshot, RiskLevel, ScanResult,
   EditableRegexRule, EntityType, FindingCategory, RegexErrorCode,
 } from '../types.ts'
 import { DEFAULT_REGEX_RULES } from '../detector.ts'
@@ -594,71 +594,13 @@ function AuditView({
   )
 }
 
-function RecentSends({ controller, records, sessionId, t }: {
-  controller: PrivacyController
-  records: readonly SendRecord[]
-  sessionId: string
-  t: PrivacyDrawerProps['t']
-}): ReactNode {
-  const recent = [...records].reverse()
-  const [expandedId, setExpandedId] = useState<string>()
-  return (
-    <section className={css.activitySection}>
-      <div className={css.activityHeading}>
-        <div><h3>{t('activity.title')}</h3><small>{t('activity.sessionOnly')}</small></div>
-        <button type="button" aria-label={t('activity.clear')} title={t('activity.clear')}
-          onClick={() => { controller.clearSendRecords(sessionId) }}><LucideIcon icon={Trash2} /></button>
-      </div>
-      <div className={css.activityRows}>
-        {recent.map(record => (
-          <button className={css.activityRow} key={record.id} type="button" aria-expanded={expandedId === record.id}
-            onClick={() => { setExpandedId(current => current === record.id ? undefined : record.id) }}>
-            <div className={css.activityMain}>
-              <time>{new Date(record.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-              <div><strong>{t('activity.sent')}</strong><small>
-                {`${String(record.redactedCount)} ${t('activity.redacted')}`}
-                {record.keptCount > 0 ? ` · ${String(record.keptCount)} ${t('activity.kept')}` : ''}
-              </small></div>
-              <span className={css.riskBadge} data-risk={record.overallRisk}>{t(RISK_KEYS[record.overallRisk])}</span>
-            </div>
-            <div className={css.activityMeta}>
-              {record.detectors.map(mode => <DetectorBadge mode={mode} key={mode} t={t} />)}
-              {record.fallbackUsed ? <small>{t('source.regexFallback')}</small> : null}
-            </div>
-            {expandedId === record.id ? (
-              <div className={css.activityDetails}>
-                {record.replacements.length === 0 ? <small>{t('activity.noDetails')}</small> : record.replacements.map((item, index) => (
-                  <div className={css.activityDetail} key={`${item.entityType}-${index}`}>
-                    <span className={css.reviewEntityTag}>{t(ENTITY_KEYS[item.entityType])}</span>
-                    <code>{item.original}</code>
-                    <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={15} /></span>
-                    <code className={css.reviewReplacement}>{item.replacement}</code>
-                    <small>{item.action === 'kept' ? t('activity.kept') : t('activity.redacted')}</small>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </button>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-function DetectionView({ controller, live, records, sessionId, t }: {
+function DetectionView({ controller, live, sessionId, t }: {
   controller: PrivacyController
   live: ReturnType<PrivacySnapshot['liveBySession']['get']>
-  records: readonly SendRecord[]
   sessionId: string | undefined
   t: PrivacyDrawerProps['t']
 }): ReactNode {
-  return (
-    <div className={css.detectionView}>
-      <AuditView controller={controller} live={live} sessionId={sessionId} t={t} />
-      {sessionId !== undefined && records.length > 0
-        ? <RecentSends controller={controller} records={records} sessionId={sessionId} t={t} /> : null}
-    </div>
-  )
+  return <div className={css.detectionView}><AuditView controller={controller} live={live} sessionId={sessionId} t={t} /></div>
 }
 
 function ruleErrorKey(code: RegexErrorCode): PrivacyKey { return `rules.error.${code}` }
@@ -1198,7 +1140,6 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
   const drawerBodyRef = useRef<HTMLDivElement>(null)
   const sessionId = useSessions(state => state.current)
   const live = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
-  const records = sessionId === undefined ? [] : snapshot.sendRecordsBySession.get(sessionId) ?? []
   const [sending, setSending] = useState(false)
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
     ['audit', 'tab.audit'],
@@ -1248,7 +1189,6 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
           <DetectionView
             controller={controller}
             live={live}
-            records={records}
             sessionId={sessionId}
             t={t}
           />

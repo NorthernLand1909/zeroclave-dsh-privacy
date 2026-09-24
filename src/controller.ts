@@ -11,7 +11,7 @@ import { PrivacyTelemetry } from './telemetry.ts'
 import type { TelemetryDetector, TelemetryEvent, TelemetryReporter } from './telemetry.ts'
 import type {
   DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
-  SendReplacementRecord, PrivacyFinding,
+  PrivacyFinding,
 } from './types.ts'
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
@@ -133,7 +133,6 @@ export class PrivacyController {
       zeroclave: { status: 'idle' },
     },
     liveBySession: new Map(),
-    sendRecordsBySession: new Map(),
     regexRules: this.storedRules.rules,
     regexRevision: 0,
     regexError: this.storedRules.error,
@@ -648,13 +647,6 @@ export class PrivacyController {
     pending.resolve(decisions)
   }
 
-  clearSendRecords(sessionId: string): void {
-    if (!this.snapshot.sendRecordsBySession.has(sessionId)) return
-    const sendRecordsBySession = new Map(this.snapshot.sendRecordsBySession)
-    sendRecordsBySession.delete(sessionId)
-    this.update({ ...this.snapshot, sendRecordsBySession })
-  }
-
   setLiveFindingReplacement(sessionId: string, findingId: string, replacement: string): void {
     const live = this.snapshot.liveBySession.get(sessionId)
     if (live === undefined || !live.result.findings.some(finding => finding.id === findingId)) return
@@ -708,44 +700,6 @@ export class PrivacyController {
       ...(durationMs === undefined ? {} : { durationMs }),
     })
     this.update({ ...this.snapshot, liveBySession })
-  }
-
-  recordSend(
-    sessionId: string,
-    results: readonly ScanResult[],
-    originals: readonly { text: string; result: ScanResult }[] = [],
-  ): void {
-    const findings = results.flatMap(result => result.findings)
-    const detectors = [...new Set(findings.map(finding => finding.detector))]
-    if (detectors.length === 0) detectors.push(...new Set(results.map(result => result.detector.used)))
-    const riskRank: Record<RiskLevel, number> = { none: 0, medium: 1, high: 2, critical: 3 }
-    const overallRisk = results.reduce<RiskLevel>((highest, result) => (
-      riskRank[result.overallRisk] > riskRank[highest] ? result.overallRisk : highest
-    ), 'none')
-    const sendRecordsBySession = new Map(this.snapshot.sendRecordsBySession)
-    const records = sendRecordsBySession.get(sessionId) ?? []
-    const replacements: SendReplacementRecord[] = results.flatMap((result, index) => {
-      const original = originals[index]?.text
-      return result.findings.map(finding => ({
-        entityType: finding.entityType,
-        original: original === undefined ? finding.maskedEvidence : original.slice(finding.start, finding.end),
-        replacement: finding.action === 'kept' ? (original?.slice(finding.start, finding.end) ?? finding.replacement) : finding.replacement,
-        action: finding.action === 'kept' ? 'kept' as const : 'redacted' as const,
-      }))
-    })
-    sendRecordsBySession.set(sessionId, [...records.slice(-9), {
-      id: randomUUID(),
-      updatedAt: Date.now(),
-      overallRisk,
-      findingCount: findings.length,
-      redactedCount: findings.filter(finding => finding.action !== 'kept').length,
-      keptCount: findings.filter(finding => finding.action === 'kept').length,
-      policySignalCount: results.reduce((count, result) => count + result.policySignals.length, 0),
-      detectors,
-      fallbackUsed: results.some(result => result.detector.fallback),
-      replacements,
-    }])
-    this.update({ ...this.snapshot, sendRecordsBySession })
   }
 
   private assertSendCurrent(signal: AbortSignal, requested: DetectorMode, revision: number): void {
