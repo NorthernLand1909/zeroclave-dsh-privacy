@@ -6,15 +6,19 @@ export const TELEMETRY_EVENTS_PATH = '/api/zeroclave-privacy/telemetry/events'
 export const MAX_TELEMETRY_BODY_BYTES = 512
 
 export type TelemetryAuthMode = 'anonymous' | 'hmac'
+export type TelemetryProvider = 'zeroclave' | 'plausible'
 
 const DAILY_ID = /^[A-Za-z0-9_-]{22}$/u
 const KEY_ID = /^[A-Za-z0-9_.-]{1,64}$/u
 const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u
 const DETECTORS = new Set(['regex', 'embedded', 'zeroclave'])
 const EVENTS = new Set(['privacy_active', 'protected_send', 'detector_used'])
+const PLAUSIBLE_SITE = /^[A-Za-z0-9_.-]{1,128}$/u
 
 export interface TelemetryProxyConfig {
   enabled: boolean
+  provider?: TelemetryProvider
+  site?: string
   authMode: TelemetryAuthMode
   endpoint: string
   keyId: string
@@ -49,10 +53,19 @@ function isLoopback(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === '[::1]'
 }
 
-function telemetryURL(value: string, authMode: TelemetryAuthMode): string {
+function telemetryURL(value: string, provider: TelemetryProvider, authMode: TelemetryAuthMode): string {
   const url = new URL(value)
   const hasQuery = url.href.includes('?')
   const hasFragment = url.href.includes('#')
+  if (provider === 'plausible') {
+    if (url.protocol !== 'https:' || url.pathname.replace(/\/+$/u, '') !== '/api/event') {
+      throw new Error('Plausible endpoint must be HTTPS /api/event')
+    }
+    if (url.username !== '' || url.password !== '' || hasQuery || hasFragment) {
+      throw new Error('Telemetry endpoint must not contain credentials, query parameters, or a fragment')
+    }
+    return url.toString()
+  }
   const hmacLoopback = authMode === 'hmac' && url.protocol === 'http:' && isLoopback(url.hostname)
   if (url.protocol !== 'https:' && !hmacLoopback) {
     throw new Error('Telemetry endpoint must use HTTPS unless HMAC targets loopback')
@@ -148,19 +161,25 @@ export function createTelemetryHandlers(
   config: (req: IncomingMessage, res: ServerResponse) => void
   events: (req: IncomingMessage, res: ServerResponse) => Promise<void>
 } {
+  const provider = config.provider ?? 'zeroclave'
+  const site = config.site ?? 'zeroclave-dsh-privacy'
   const secret = config.secret
   let endpoint: string | undefined
-  if (config.enabled && (config.authMode === 'anonymous' || config.authMode === 'hmac')
+  if (config.enabled && (provider === 'plausible' || config.authMode === 'anonymous' || config.authMode === 'hmac')
+    && (provider !== 'plausible' || config.authMode === 'anonymous')
+    && (provider !== 'plausible' || PLAUSIBLE_SITE.test(site))
     && VERSION.test(config.pluginVersion)) {
-    try { endpoint = telemetryURL(config.endpoint, config.authMode) } catch { endpoint = undefined }
+    try { endpoint = telemetryURL(config.endpoint, provider, config.authMode) } catch { endpoint = undefined }
   }
   const destination = endpoint === undefined
     ? undefined
-    : config.authMode === 'anonymous'
-      ? { authMode: config.authMode, endpoint }
+    : provider === 'plausible'
+      ? { provider, endpoint, site }
+      : config.authMode === 'anonymous'
+        ? { provider, authMode: config.authMode, endpoint }
       : secret !== undefined && secret.length >= 32 && !secret.startsWith('replace-with-')
         && KEY_ID.test(config.keyId)
-        ? { authMode: config.authMode, endpoint, secret }
+        ? { provider, authMode: config.authMode, endpoint, secret }
         : undefined
   const active = destination !== undefined
 
@@ -208,16 +227,24 @@ export function createTelemetryHandlers(
         sendJSON(res, code === 'invalid_json' ? 400 : 422, { error: { code, message: 'Telemetry payload is invalid' } })
         return
       }
-      const outbound = JSON.stringify({
-        schema_version: 1,
-        product: 'zeroclave-dsh-privacy',
-        event: event.event,
-        daily_id: event.daily_id,
-        plugin_version: config.pluginVersion,
-        ...(event.event === 'detector_used' ? { value: event.value } : {}),
-      })
+      const outbound = destination.provider === 'plausible'
+        ? JSON.stringify({
+          domain: destination.site,
+          name: event.event === 'detector_used' ? `detector_used_${event.value}` : event.event,
+          url: 'app://zeroclave-dsh-privacy/',
+        })
+        : JSON.stringify({
+          schema_version: 1,
+          product: 'zeroclave-dsh-privacy',
+          event: event.event,
+          daily_id: event.daily_id,
+          plugin_version: config.pluginVersion,
+          ...(event.event === 'detector_used' ? { value: event.value } : {}),
+        })
       const headers: Record<string, string> = { 'content-type': 'application/json' }
-      if (destination.authMode === 'hmac') {
+      if (destination.provider === 'plausible') {
+        headers['user-agent'] = 'ZeroClave-Telemetry/0.1'
+      } else if (destination.authMode === 'hmac') {
         const timestamp = String(Math.floor(internals.now() / 1_000))
         const nonce = internals.randomBytes(16).toString('base64url')
         const bodyHash = createHash('sha256').update(outbound).digest('hex')

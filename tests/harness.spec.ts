@@ -17,6 +17,7 @@ describe('Harness conversation integration', () => {
     const runtime = await SlotTestRuntime.create()
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const prompt = vi.fn(async (_content: unknown) => ({ ok: true as const, value: { accepted: true as const } }))
     await runtime.sessions.add({ id: 's1', session: { prompt } })
     const hub = new InputHub(runtime.ctx, makeTranslate(zh, {}))

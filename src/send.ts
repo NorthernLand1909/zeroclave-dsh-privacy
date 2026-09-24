@@ -67,7 +67,7 @@ export function installSendRedaction(conversation: object, controller: PrivacyCo
           if (outcome.ok) {
             controller.reportTelemetry('protected_send')
             if (resultsSent.some(result => result.findings.length > 0 || result.policySignals.length > 0)) {
-              controller.recordSend(target.sessionId, resultsSent)
+              controller.recordSend(target.sessionId, resultsSent, scanned)
             }
           }
           return outcome

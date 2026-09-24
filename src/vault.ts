@@ -94,7 +94,8 @@ export class PrivacyVault {
           values.set(key, mapping)
           additions.push(mapping)
         }
-        return { ...finding, replacement: mapping.token }
+        const { sendReplacement, ...persistedFinding } = finding
+        return { ...persistedFinding, replacement: sendReplacement ?? mapping.token }
       })
       // Persist before returning sendable text, so a reload can still restore the response.
       await this.store.write(additions)

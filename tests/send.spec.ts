@@ -69,6 +69,7 @@ describe('composer send boundary', () => {
   it('sends redacted text and keeps the composer echo, attachment and admission metadata intact', async () => {
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const composer = new Composer()
     installSendRedaction(composer, controller)
     const prompt = vi.fn(async () => ({ ok: true }))
@@ -92,6 +93,7 @@ describe('composer send boundary', () => {
     const vault = new PrivacyVault({ ...memoryStore(), write: async () => { throw new Error('quota') } })
     const controller = new PrivacyController(vault)
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const composer = new Composer()
     installSendRedaction(composer, controller)
     const prompt = vi.fn(async () => ({ ok: true }))
@@ -118,6 +120,7 @@ describe('composer send boundary', () => {
       },
     }))
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const composer = new Composer()
     installSendRedaction(composer, controller)
     const prompt = vi.fn(async () => ({ ok: true }))
@@ -132,7 +135,7 @@ describe('composer send boundary', () => {
     expect(composer.echo).toBe('demo@example.com')
   })
 
-  it('pauses a critical send for one review and applies per-finding choices', async () => {
+  it('pauses a manual send for one review and applies per-finding choices', async () => {
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
     const composer = new Composer()
@@ -145,7 +148,7 @@ describe('composer send boundary', () => {
     expect(prompt).not.toHaveBeenCalled()
     const review = controller.getSnapshot().pendingSendReview!
     const secretFinding = review.parts[0]?.result.findings.find(finding => finding.entityType === 'API_KEY')
-    if (secretFinding === undefined) throw new Error('critical finding missing')
+    if (secretFinding === undefined) throw new Error('secret finding missing')
     controller.setSendReviewFinding(`0:${secretFinding.id}`, false)
     controller.confirmSendReview()
     await sending
@@ -158,7 +161,7 @@ describe('composer send boundary', () => {
     }))
   })
 
-  it('cancels a critical review without sending or writing mappings', async () => {
+  it('cancels a manual review without sending or writing mappings', async () => {
     const write = vi.fn(async () => undefined)
     const controller = new PrivacyController(new PrivacyVault({ ...memoryStore(), write }))
     controller.setEnabled(true)
@@ -176,7 +179,27 @@ describe('composer send boundary', () => {
     expect(controller.getSnapshot().sendRecordsBySession.size).toBe(0)
   })
 
-  it('supports automatic critical redaction when the user selects that policy', async () => {
+  it('allows editing a redaction before confirming a manual send', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const composer = new Composer()
+    installSendRedaction(composer, controller)
+    const prompt = vi.fn(async () => ({ ok: true }))
+    const sending = composer.sendSession({ sessionId: 's1', prompt }, 'email=demo@example.com', [], 'queue')
+    await vi.waitFor(() => { expect(controller.getSnapshot().pendingSendReview).toBeDefined() })
+    const review = controller.getSnapshot().pendingSendReview!
+    const finding = review.parts[0]?.result.findings[0]
+    if (finding === undefined) throw new Error('email finding missing')
+    const key = `0:${finding.id}`
+    controller.setSendReviewReplacement(key, '[TEAM_EMAIL]')
+    controller.confirmSendReview()
+    await sending
+    const outgoing = (prompt.mock.calls[0]?.[0] as Array<{ text: string }>)[0]?.text ?? ''
+    expect(outgoing).toBe('email=[TEAM_EMAIL]')
+    expect(outgoing).not.toContain('demo@example.com')
+  })
+
+  it('supports automatic redaction when the user selects that policy', async () => {
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
     controller.setSendPolicy('auto-redact')
@@ -220,6 +243,7 @@ describe('composer send boundary', () => {
   it('honors cancellation before sending and does not record a rejected admission as sent', async () => {
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const composer = new Composer()
     installSendRedaction(composer, controller)
     const session = { sessionId: 's1', prompt: vi.fn(async () => ({ ok: false })) }

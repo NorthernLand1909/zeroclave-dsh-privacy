@@ -15,11 +15,11 @@ An experimental, local-first privacy plugin for the DeepSeek Harness Web UI.
 - Shows the detector source on every finding and keeps the latest ten summary-only send records per DSH session.
 - Shows the current findings, redacted preview, and session send activity in one DSH detection view.
 - Supports the anonymous ZeroClave Gateway detector through a same-origin DSH Host proxy, with no API key.
-- Offers privacy-preserving product telemetry as an explicit opt-in, disabled by default.
+- Offers privacy-preserving product telemetry, enabled by default when configured and always user-disableable.
 
 With privacy enabled, the normal composer send action automatically scans and redacts text. The original draft is not replaced. A failed scan, a partial ZeroClave result, or a mapping write failure prevents the send, allowing the composer to retain the original for retry. The inspection drawer remains an explicit view of the original and redacted preview.
 
-The default send policy pauses a message containing critical findings before Host admission. The review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Detection settings**.
+The default send policy pauses a message containing sensitive findings before Host admission. The manual review lists the matching rule or model source, starts every finding in the redacted state, and lets the user keep an individual value or edit its redacted replacement for that send. Cancelling the review leaves the draft available and writes no restoration mapping. Users who prefer an uninterrupted flow can select automatic redaction under **Entity detection**.
 
 Session activity contains only time, counts, highest risk, detector modes, and fallback status. It stores no draft, finding, evidence, replacement, or redacted text, and disappears when the page reloads.
 
@@ -43,47 +43,33 @@ The target Gateway must publish the anonymous `POST /v1/pii/detect` route and en
 
 ## Optional product telemetry
 
-Browser telemetry consent is off by default and must be enabled explicitly in
-**Detection settings**. Global Privacy Control forces it off. The marketplace
-bundle makes the Host relay capability available, but that relay sends nothing
-until the browser user opts in. Administrators can disable the capability with
+Browser telemetry is on by default when configured, and **Detection settings**
+always provides an explicit opt-out. Global Privacy Control forces it off. The
+marketplace bundle makes the Host relay capability available. Administrators can disable the capability with
 `telemetryEnabled: false`.
 
-Marketplace installations use Alibaba Cloud ESA as a narrow public ingress.
-ESA validates and rebuilds the allowlisted request, signs the request to the
-origin, and forwards it to a local Node.js receiver and SQLite on the ZeroClave
-ECS host. ESA is not the authoritative datastore. The official ZeroClave DSH
-deployment can instead use the local receiver directly over loopback with HMAC.
-
-The browser sends only a fresh 16-byte random identifier for the current UTC
-day, the plugin version, and one of three fixed events: a successful non-empty
-privacy inspection, a successful protected send, or the detector actually
-used (`regex`, `embedded`, or `zeroclave`). Each event/value is delivered at
-most once per browser profile per day. It does not send message or redacted
-text, findings, entity types or counts, custom rules, session/account IDs,
-request IDs, errors, latency, URLs, locale, or device attributes. The resulting
-DAU is an approximation based on unique daily random IDs, not people. Clearing
-browser storage or withdrawing and granting consent again can create another
-ID on the same day.
-
-The browser calls only the same-origin DSH Host. The Host strictly validates the
-browser payload, rebuilds the fixed allowlist, and adds the package version.
-Marketplace Hosts use anonymous HTTPS relay mode and contain no shared
-telemetry credential:
+Marketplace installations use the Plausible Events API. The same-origin DSH
+Host validates the browser payload and maps it to fixed Plausible event names;
+it sends no Plausible API key and does not forward the browser's daily random
+identifier:
 
 ```yaml
 telemetryEnabled: true
+telemetryProvider: plausible
 telemetryAuthMode: anonymous
-telemetryEndpoint: https://telemetry.zeroclave.ai
+telemetryEndpoint: https://plausible.io/api/event
+telemetrySite: zeroclave-dsh-privacy
 telemetryTimeoutMs: 2000
 ```
 
-Here `telemetryEnabled` means only that the consent control can be offered; it
-does not grant browser consent. For the official deployment, configure HMAC
-plus the loopback receiver explicitly:
+Here `telemetryEnabled` controls whether the telemetry capability is offered;
+the browser defaults to consent unless the user has opted out or GPC is active.
+For the official deployment, configure HMAC
+plus the loopback receiver explicitly with `telemetryProvider: zeroclave`:
 
 ```yaml
 telemetryEnabled: true
+telemetryProvider: zeroclave
 telemetryAuthMode: hmac
 telemetryEndpoint: http://127.0.0.1:8788
 telemetryKeyId: dsh-prod-1
@@ -92,22 +78,20 @@ telemetryTimeoutMs: 2000
 ```
 
 The HMAC key comes only from the named environment variable; it is never a
-Cordis value, package file, or browser asset. Anonymous marketplace requests
-have no Host HMAC headers. ESA validates and rebuilds them before adding its
-own origin authentication.
+Cordis value, package file, or browser asset. Plausible receives only the
+fixed event names `privacy_active`, `protected_send`, `detector_used_regex`,
+`detector_used_embedded`, and `detector_used_zeroclave`. It does not receive
+text, findings, rules, daily IDs, session/account IDs, request IDs, errors,
+latency, or device attributes. Plausible may process connection metadata for
+its own visitor reports, so these metrics are event trends rather than an exact
+DAU measurement.
 
 Telemetry is best-effort and never blocks detection, redaction, or sending.
 Withdrawing consent aborts pending browser delivery and clears its dedicated
-telemetry IndexedDB. The service stores only a metric-scoped keyed hash, not
-the raw daily identifier, in a volatile runtime database. Its internal deletion
-threshold is 47 hours with a 48-hour external limit; aggregate counts contain
-no identifier. The official Host sends over loopback. For marketplace Hosts,
-Alibaba Cloud ESA terminates TLS and processes the allowlisted event body and
-connection metadata while forwarding it; this design does not intentionally
-write either to ESA logs or storage, but provider-level handling remains
-governed by Alibaba Cloud's terms. The public ingress and open-source Host can
-be imitated, so events are forgeable. These metrics are approximate product
-trends only, never billing, abuse decisions, or security policy.
+telemetry IndexedDB. Plausible is hosted in the EU; provider handling is
+governed by its terms and privacy policy. Public events can be fabricated, so
+these metrics are approximate product trends only, never billing, abuse
+decisions, or security policy.
 
 ## Regex coverage
 
@@ -133,7 +117,7 @@ pnpm run build
 
 The browser smoke test also runs from that package location. From a standalone clone, set `DSH_REPO` to the matching Harness checkout before running `node tests/browser-smoke.mjs`.
 
-GitHub Actions performs the same build against the exact Harness revision recorded under `integrations/deepseek-harness/`. Pull requests run type checks, tests, a real Chrome smoke test, and package-content auditing without using secrets. Trusted `main` pushes and manual runs also expose the audited `.tgz` plus its SHA-256 checksum as a short-lived workflow artifact.
+GitHub Actions performs the same build against the exact Harness revision recorded under `integrations/deepseek-harness/`. Pull requests run type checks, tests, a real Chrome smoke test, and package-content auditing without using secrets. Trusted `main` and `alpha` pushes, plus manual runs, also expose the audited `.tgz` and its SHA-256 checksum as a short-lived workflow artifact.
 
 Install the built checkout into a Web profile and restart DSH:
 
@@ -167,7 +151,7 @@ self-contained.
 - Display restoration is limited to visible message prose. Markdown destinations, code, attachment metadata, paths, identifiers, and tool payloads retain placeholders.
 - Old `__PII_*__` messages from releases through alpha.5 have no durable restoration map. Unknown placeholders are preserved; the plugin cannot reconstruct their originals.
 - ZeroClave requests are visible in the detection settings, expose connection errors, and use a longer draft debounce. Service failures and incomplete results block sending instead of being interpreted as no findings.
-- Product telemetry is separately opt-in, defaults off in the browser, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, but sends nothing without consent. Alibaba Cloud ESA processes the allowlisted event body and connection metadata while forwarding it, and public events can be fabricated, so metrics are approximate only.
+- Product telemetry is enabled by default when configured, remains user-disableable, respects GPC, and never contains draft text or detection results. Marketplace relay capability is available by default, and public events can be fabricated, so metrics are approximate only.
 
 ## Known Limitations and Deferred Work
 

@@ -152,15 +152,29 @@ describe('privacy-preserving telemetry reporter', () => {
     }
   })
 
-  it('stays off by default even when the Host advertises telemetry', async () => {
+  it('starts on by default when the Host advertises telemetry', async () => {
+    const store = new MemoryTelemetryStore()
+    const fetchMock = enabledFetch()
+    const telemetry = makeTelemetry(store, fetchMock)
+
+    await expect(telemetry.initialize()).resolves.toBe('available')
+    expect(telemetry.consent).toBe(true)
+    expect(window.localStorage.getItem(CONSENT_KEY)).toBeNull()
+
+    telemetry.report('privacy_active')
+    await vi.waitFor(() => { expect(eventCalls(fetchMock)).toHaveLength(1) })
+
+    expect(store.dailyIds.size).toBe(1)
+  })
+
+  it('preserves an explicit opt-out across initialization', async () => {
+    window.localStorage.setItem(CONSENT_KEY, 'false')
     const store = new MemoryTelemetryStore()
     const fetchMock = enabledFetch()
     const telemetry = makeTelemetry(store, fetchMock)
 
     await expect(telemetry.initialize()).resolves.toBe('available')
     expect(telemetry.consent).toBe(false)
-    expect(window.localStorage.getItem(CONSENT_KEY)).toBeNull()
-
     telemetry.report('privacy_active')
     await Promise.resolve()
 

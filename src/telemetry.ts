@@ -263,7 +263,7 @@ export class PrivacyTelemetry implements TelemetryReporter {
   private readonly storage: Storage | undefined
   private readonly onStorage = (event: StorageEvent): void => {
     if (event.key !== CONSENT_KEY) return
-    const consent = event.newValue === 'true' && this.available && !this.lockedByGpc
+    const consent = event.newValue !== 'false' && this.available && !this.lockedByGpc
     this.consentOverride = consent
     if (consent) this.startConsentOperation()
     else this.cancelAndClear()
@@ -286,7 +286,7 @@ export class PrivacyTelemetry implements TelemetryReporter {
   get consent(): boolean {
     if (!this.available || this.lockedByGpc || this.storage === undefined) return false
     if (this.consentOverride !== undefined) return this.consentOverride
-    try { return this.storage.getItem(CONSENT_KEY) === 'true' } catch { return false }
+    try { return this.storage.getItem(CONSENT_KEY) !== 'false' } catch { return false }
   }
 
   async initialize(signal?: AbortSignal): Promise<TelemetryAvailability> {

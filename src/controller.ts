@@ -11,6 +11,7 @@ import { PrivacyTelemetry } from './telemetry.ts'
 import type { TelemetryDetector, TelemetryEvent, TelemetryReporter } from './telemetry.ts'
 import type {
   DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
+  SendReplacementRecord, PrivacyFinding,
 } from './types.ts'
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
@@ -18,6 +19,35 @@ const SEND_POLICY_STORAGE_KEY = 'zeroclave.privacy.send-policy'
 const ZEROCLAVE_CONNECTION_TEST_TEXT = 'ZeroClave synthetic connection test: demo@example.com'
 
 export class SendReviewCancelledError extends Error {}
+
+interface SendReviewDecisions {
+  redactByFinding: Readonly<Record<string, boolean>>
+  replacementByFinding: Readonly<Record<string, string>>
+}
+
+interface CustomFindingInput {
+  original: string
+  replacement: string
+  sourceType: string
+}
+
+function rebuildScanResult(text: string, result: ScanResult, findings: readonly PrivacyFinding[]): ScanResult {
+  const ordered = [...findings].sort((left, right) => left.start - right.start)
+  const redactedText = [...ordered].sort((left, right) => right.start - left.start).reduce((value, finding) => (
+    value.slice(0, finding.start) + finding.replacement + value.slice(finding.end)
+  ), text)
+  const riskRank: Record<RiskLevel, number> = { none: 0, medium: 1, high: 2, critical: 3 }
+  const overallRisk = ordered.reduce<RiskLevel>((highest, finding) => (
+    riskRank[finding.severity] > riskRank[highest] ? finding.severity : highest
+  ), 'none')
+  return {
+    ...result,
+    findings: ordered,
+    overallRisk,
+    recommendedAction: overallRisk === 'critical' ? 'block' : ordered.length > 0 ? 'redact' : 'allow',
+    redactedText,
+  }
+}
 
 function storedEnabled(): boolean {
   if (typeof window === 'undefined') return false
@@ -29,9 +59,9 @@ function storedEnabled(): boolean {
 }
 
 function storedSendPolicy(): SendPolicy {
-  if (typeof window === 'undefined') return 'review-critical'
-  try { return window.localStorage.getItem(SEND_POLICY_STORAGE_KEY) === 'auto-redact' ? 'auto-redact' : 'review-critical' } catch {
-    return 'review-critical'
+  if (typeof window === 'undefined') return 'review-manual'
+  try { return window.localStorage.getItem(SEND_POLICY_STORAGE_KEY) === 'auto-redact' ? 'auto-redact' : 'review-manual' } catch {
+    return 'review-manual'
   }
 }
 
@@ -44,6 +74,21 @@ function disabledResult(text: string, requested: DetectorMode): ScanResult {
     policySignals: [],
     detector: { requested, used: 'regex', fallback: false },
   }
+}
+
+function withFindingReplacements(
+  result: ScanResult, replacements: ReadonlyMap<string, string> | undefined, originalText?: string,
+): ScanResult {
+  if (replacements === undefined || replacements.size === 0) return result
+  const findings = result.findings.map(finding => {
+    const replacement = replacements.get(finding.id)
+    if (replacement === undefined) return finding
+    return { ...finding, replacement, sendReplacement: replacement }
+  })
+  const redactedText = [...findings].sort((left, right) => right.start - left.start).reduce((value, finding) => (
+    value.slice(0, finding.start) + finding.replacement + value.slice(finding.end)
+  ), originalText ?? result.redactedText)
+  return { ...result, findings, redactedText }
 }
 
 function aborted(signal: AbortSignal | undefined): boolean {
@@ -73,6 +118,8 @@ export class PrivacyController {
   private readonly lifetime = new AbortController()
   private readonly inspections = new Map<string, AbortController>()
   private readonly sends = new Set<AbortController>()
+  private readonly findingReplacements = new Map<string, Map<string, string>>()
+  private readonly customFindings = new Map<string, CustomFindingInput[]>()
   private zeroClaveTest: AbortController | undefined
   private zeroClaveStateOwner = 0
   private snapshot: PrivacySnapshot = {
@@ -101,7 +148,7 @@ export class PrivacyController {
   private readonly listeners = new Set<() => void>()
   private sendReview: {
     id: string
-    resolve: (redactByFinding: Readonly<Record<string, boolean>> | undefined) => void
+    resolve: (decisions: SendReviewDecisions | undefined) => void
     signal: AbortSignal
     abort: () => void
   } | undefined
@@ -185,9 +232,74 @@ export class PrivacyController {
     } })
   }
 
+  setSendReviewReplacement(findingId: string, replacement: string): void {
+    const review = this.snapshot.pendingSendReview
+    if (review === undefined || !(findingId in review.replacementByFinding)) return
+    this.update({ ...this.snapshot, pendingSendReview: {
+      ...review, replacementByFinding: { ...review.replacementByFinding, [findingId]: replacement },
+    } })
+  }
+
+  addSendReviewFinding(original: string, replacement: string, sourceType: string): boolean {
+    const review = this.snapshot.pendingSendReview
+    const source = original.trim()
+    if (review === undefined || source === '' || replacement.trim() === '') return false
+    const partIndex = review.parts.findIndex(part => part.text.includes(source))
+    if (partIndex < 0) return false
+    const part = review.parts[partIndex]
+    if (part === undefined) return false
+    const start = part.text.indexOf(source)
+    const end = start + source.length
+    if (part.result.findings.some(finding => start < finding.end && end > finding.start)) return false
+    const finding: PrivacyFinding = {
+      id: `custom_${randomUUID()}`,
+      category: 'DIRECT_PII',
+      entityType: 'OTHER',
+      sourceType: sourceType.trim() || 'CUSTOM',
+      start,
+      end,
+      maskedEvidence: source,
+      replacement: replacement.trim(),
+      severity: 'high',
+      detector: part.result.detector.used,
+      ruleName: 'User-added entity',
+      action: 'redacted',
+    }
+    const parts = review.parts.map((item, index) => index === partIndex
+      ? { ...item, result: rebuildScanResult(item.text, item.result, [...item.result.findings, finding]) }
+      : item)
+    const key = `${String(partIndex)}:${finding.id}`
+    this.update({ ...this.snapshot, pendingSendReview: {
+      ...review,
+      parts,
+      redactByFinding: { ...review.redactByFinding, [key]: true },
+      replacementByFinding: { ...review.replacementByFinding, [key]: finding.replacement },
+    } })
+    return true
+  }
+
+  addLiveFinding(sessionId: string, original: string, replacement: string, sourceType: string): boolean {
+    const live = this.snapshot.liveBySession.get(sessionId)
+    const source = original.trim()
+    const target = replacement.trim()
+    if (live === undefined || source === '' || target === '') return false
+    const start = live.text.indexOf(source)
+    if (start < 0) return false
+    const end = start + source.length
+    if (live.result.findings.some(finding => start < finding.end && end > finding.start)) return false
+    const item = { original: source, replacement: target, sourceType: sourceType.trim() || 'CUSTOM' }
+    this.customFindings.set(sessionId, [...(this.customFindings.get(sessionId) ?? []), item])
+    const finding = this.makeCustomFinding(item, start, end, live.result.detector.used)
+    this.updateLive(sessionId, live.text, rebuildScanResult(live.text, live.result, [...live.result.findings, finding]), live.durationMs)
+    return true
+  }
+
   confirmSendReview(): void {
     const review = this.snapshot.pendingSendReview
-    if (review !== undefined) this.settleSendReview(review.id, review.redactByFinding)
+    if (review !== undefined) this.settleSendReview(review.id, {
+      redactByFinding: review.redactByFinding,
+      replacementByFinding: review.replacementByFinding,
+    })
   }
 
   cancelSendReview(): void {
@@ -203,6 +315,9 @@ export class PrivacyController {
 
   scan(text: string): ScanResult {
     if (!this.snapshot.enabled) return disabledResult(text, this.snapshot.detectorMode)
+    if (this.snapshot.detectorMode === 'zeroclave') {
+      return finalizeScan(text, [], 'zeroclave', 'zeroclave', false)
+    }
     return scanRegex(text, this.snapshot.detectorMode, this.snapshot.regexRules)
   }
 
@@ -241,12 +356,15 @@ export class PrivacyController {
   }
 
   async inspect(sessionId: string, text: string, signal?: AbortSignal): Promise<void> {
+    const startedAt = Date.now()
     this.inspections.get(sessionId)?.abort()
     const operation = new AbortController()
     this.inspections.set(sessionId, operation)
     signal = AbortSignal.any([operation.signal, this.lifetime.signal, ...(signal === undefined ? [] : [signal])])
     const requested = this.snapshot.detectorMode
     const revision = this.snapshot.regexRevision
+    this.findingReplacements.delete(sessionId)
+    this.customFindings.delete(sessionId)
     const baseline = this.scan(text)
     this.updateLive(sessionId, text, baseline)
     if (!this.snapshot.enabled || aborted(signal)) return
@@ -254,11 +372,13 @@ export class PrivacyController {
     let zeroClaveOwner: number | undefined
     try {
       if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
-      const candidates = await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
+      const candidates = requested === 'zeroclave'
+        ? []
+        : await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
       if (requested === 'zeroclave') {
         zeroClaveOwner = this.beginZeroClaveOperation()
         const [remote] = await this.zeroclave.scanBatch([{
-          id: 'draft', revision: `r-${randomUUID()}`, text, regex: candidates,
+          id: 'draft', revision: `r-${randomUUID()}`, text, regex: [],
         }], signal)
         if (remote === undefined) {
           throw new ZeroClaveDetectError('detector_response_invalid', 'ZeroClave result is missing')
@@ -309,7 +429,7 @@ export class PrivacyController {
         ...(result.detector.requestId === undefined ? {} : { requestId: result.detector.requestId }),
       })
     }
-    this.updateLive(sessionId, text, result)
+    this.updateLive(sessionId, text, result, Math.max(0, Date.now() - startedAt))
     if (text.length > 0) {
       this.reportTelemetry('privacy_active')
       this.reportTelemetry('detector_used', result.detector.used)
@@ -381,7 +501,9 @@ export class PrivacyController {
       if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
       const candidates: Awaited<ReturnType<typeof scanConfiguredRules>>[] = []
       for (const text of texts) {
-        candidates.push(await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal))
+        candidates.push(requested === 'zeroclave'
+          ? []
+          : await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal))
       }
       let scanned: ScanResult[]
       try {
@@ -391,7 +513,7 @@ export class PrivacyController {
             id: `text-${String(index)}`,
             revision: `r-${randomUUID()}`,
             text,
-            regex: candidates[index] ?? [],
+            regex: [],
           })), signal)
           const partial = scanned.find(result => result.detector.status === 'partial')
           if (partial !== undefined) {
@@ -431,12 +553,26 @@ export class PrivacyController {
         }
         throw error
       }
+      scanned = scanned.map((result, index) => {
+        const text = texts[index] ?? ''
+        const additions = (this.customFindings.get(sessionId) ?? []).flatMap(item => {
+          const start = text.indexOf(item.original)
+          if (start < 0) return []
+          const end = start + item.original.length
+          if (result.findings.some(finding => start < finding.end && end > finding.start)) return []
+          return [this.makeCustomFinding(item, start, end, result.detector.used)]
+        })
+        return withFindingReplacements(
+          rebuildScanResult(text, result, [...result.findings, ...additions]),
+          this.findingReplacements.get(sessionId), text,
+        )
+      })
       signal.throwIfAborted()
       if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
         || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
       this.reportScanTelemetry(texts, scanned)
-      let decisions: Readonly<Record<string, boolean>> | undefined
-      if (scanned.some(result => result.overallRisk === 'critical') && this.snapshot.sendPolicy === 'review-critical') {
+      let decisions: SendReviewDecisions | undefined
+      if (scanned.some(result => result.findings.length > 0) && this.snapshot.sendPolicy === 'review-manual') {
         const parts = texts.map((text, index) => {
           const result = scanned[index]
           if (result === undefined) throw new Error('Privacy scan result missing')
@@ -455,10 +591,17 @@ export class PrivacyController {
         if (text === undefined) throw new Error('Privacy scan input missing')
         const redacted = await this.vault.redact(sessionId, text, {
           ...result,
-          findings: result.findings.map(finding => ({
-            ...finding,
-            action: decisions?.[`${String(index)}:${finding.id}`] === false ? 'kept' : 'redacted',
-          })),
+          findings: result.findings.map(finding => {
+            const key = `${String(index)}:${finding.id}`
+            const replacement = decisions?.replacementByFinding[key]
+            return {
+              ...finding,
+              action: decisions?.redactByFinding[key] === false ? 'kept' : 'redacted',
+              ...(finding.sendReplacement !== undefined
+                ? { sendReplacement: finding.sendReplacement }
+                : replacement === undefined || replacement === finding.replacement ? {} : { sendReplacement: replacement }),
+            }
+          }),
         })
         this.assertSendCurrent(signal, requested, revision)
         outgoing.push(redacted)
@@ -476,23 +619,26 @@ export class PrivacyController {
 
   private requestSendReview(
     sessionId: string, parts: readonly { text: string; result: ScanResult }[], signal: AbortSignal,
-  ): Promise<Readonly<Record<string, boolean>> | undefined> {
+  ): Promise<SendReviewDecisions | undefined> {
     this.cancelSendReview()
     const id = randomUUID()
     const redactByFinding = Object.fromEntries(parts.flatMap((part, index) => (
       part.result.findings.map(finding => [`${String(index)}:${finding.id}`, true])
+    )))
+    const replacementByFinding = Object.fromEntries(parts.flatMap((part, index) => (
+      part.result.findings.map(finding => [`${String(index)}:${finding.id}`, finding.replacement])
     )))
     return new Promise((resolve) => {
       const abort = (): void => { this.settleSendReview(id, undefined) }
       this.sendReview = { id, resolve, signal, abort }
       signal.addEventListener('abort', abort, { once: true })
       this.update({ ...this.snapshot, open: true, pendingSendReview: {
-        id, sessionId, parts, redactByFinding,
+        id, sessionId, parts, redactByFinding, replacementByFinding,
       } })
     })
   }
 
-  private settleSendReview(id: string, decisions: Readonly<Record<string, boolean>> | undefined): void {
+  private settleSendReview(id: string, decisions: SendReviewDecisions | undefined): void {
     const pending = this.sendReview
     if (pending?.id !== id) return
     pending.signal.removeEventListener('abort', pending.abort)
@@ -509,19 +655,43 @@ export class PrivacyController {
     this.update({ ...this.snapshot, sendRecordsBySession })
   }
 
+  setLiveFindingReplacement(sessionId: string, findingId: string, replacement: string): void {
+    const live = this.snapshot.liveBySession.get(sessionId)
+    if (live === undefined || !live.result.findings.some(finding => finding.id === findingId)) return
+    const replacements = new Map(this.findingReplacements.get(sessionId))
+    replacements.set(findingId, replacement)
+    this.findingReplacements.set(sessionId, replacements)
+    this.updateLive(sessionId, live.text, withFindingReplacements(live.result, replacements, live.text), live.durationMs)
+  }
+
+  setLiveFindingProtection(sessionId: string, findingId: string, protectedValue: boolean, original: string): void {
+    const live = this.snapshot.liveBySession.get(sessionId)
+    if (live === undefined) return
+    const findings = live.result.findings.map(finding => finding.id === findingId
+      ? { ...finding, action: protectedValue ? 'redacted' as const : 'kept' as const,
+        replacement: original }
+      : finding)
+    this.updateLive(sessionId, live.text, rebuildScanResult(live.text, live.result, findings), live.durationMs)
+  }
+
   async dispose(): Promise<void> {
     this.cancelSendReview()
     this.cancelActiveOperations()
     this.lifetime.abort()
     this.inspections.clear()
+    this.findingReplacements.clear()
+    this.customFindings.clear()
     this.listeners.clear()
     await this.embedded.dispose()
     await this.vault.dispose()
     await this.telemetryReporter.dispose()
   }
 
-  updateLive(sessionId: string, text: string, result: ScanResult): void {
+  updateLive(sessionId: string, text: string, result: ScanResult, durationMs?: number): void {
     const previous = this.snapshot.liveBySession.get(sessionId)
+    const sameDuration = durationMs === undefined
+      ? previous?.durationMs === undefined
+      : previous?.durationMs === durationMs
     if (
       previous?.text === text
       && previous.result.detector.requested === result.detector.requested
@@ -530,13 +700,21 @@ export class PrivacyController {
       && previous.result.detector.model === result.detector.model
       && previous.result.detector.requestId === result.detector.requestId
       && previous.result.redactedText === result.redactedText
+      && sameDuration
     ) return
     const liveBySession = new Map(this.snapshot.liveBySession)
-    liveBySession.set(sessionId, { text, result, updatedAt: Date.now() })
+    liveBySession.set(sessionId, {
+      text, result, updatedAt: Date.now(),
+      ...(durationMs === undefined ? {} : { durationMs }),
+    })
     this.update({ ...this.snapshot, liveBySession })
   }
 
-  recordSend(sessionId: string, results: readonly ScanResult[]): void {
+  recordSend(
+    sessionId: string,
+    results: readonly ScanResult[],
+    originals: readonly { text: string; result: ScanResult }[] = [],
+  ): void {
     const findings = results.flatMap(result => result.findings)
     const detectors = [...new Set(findings.map(finding => finding.detector))]
     if (detectors.length === 0) detectors.push(...new Set(results.map(result => result.detector.used)))
@@ -546,6 +724,15 @@ export class PrivacyController {
     ), 'none')
     const sendRecordsBySession = new Map(this.snapshot.sendRecordsBySession)
     const records = sendRecordsBySession.get(sessionId) ?? []
+    const replacements: SendReplacementRecord[] = results.flatMap((result, index) => {
+      const original = originals[index]?.text
+      return result.findings.map(finding => ({
+        entityType: finding.entityType,
+        original: original === undefined ? finding.maskedEvidence : original.slice(finding.start, finding.end),
+        replacement: finding.action === 'kept' ? (original?.slice(finding.start, finding.end) ?? finding.replacement) : finding.replacement,
+        action: finding.action === 'kept' ? 'kept' as const : 'redacted' as const,
+      }))
+    })
     sendRecordsBySession.set(sessionId, [...records.slice(-9), {
       id: randomUUID(),
       updatedAt: Date.now(),
@@ -556,6 +743,7 @@ export class PrivacyController {
       policySignalCount: results.reduce((count, result) => count + result.policySignals.length, 0),
       detectors,
       fallbackUsed: results.some(result => result.detector.fallback),
+      replacements,
     }])
     this.update({ ...this.snapshot, sendRecordsBySession })
   }
@@ -564,6 +752,15 @@ export class PrivacyController {
     signal.throwIfAborted()
     if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
       || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
+  }
+
+  private makeCustomFinding(item: CustomFindingInput, start: number, end: number, detector: DetectorMode): PrivacyFinding {
+    return {
+      id: `custom_${randomUUID()}`,
+      category: 'DIRECT_PII', entityType: 'OTHER', sourceType: item.sourceType,
+      start, end, maskedEvidence: item.original, replacement: item.replacement,
+      severity: 'high', detector, ruleName: 'User-added entity', action: 'redacted',
+    }
   }
 
   private beginZeroClaveOperation(): number {
