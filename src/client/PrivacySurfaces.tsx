@@ -124,18 +124,6 @@ function findingTypeLabel(finding: PrivacyFinding, t: PrivacyDrawerProps['t']): 
   return t(ENTITY_KEYS[finding.entityType])
 }
 
-function DetectorBadge({ mode, fallback = false, t }: {
-  mode: DetectorMode
-  fallback?: boolean
-  t: PrivacyDrawerProps['t']
-}): ReactNode {
-  return (
-    <span className={css.detectorBadge} data-detector={mode}>
-      {t(fallback && mode === 'regex' ? 'source.regexFallback' : DETECTOR_KEYS[mode])}
-    </span>
-  )
-}
-
 function usePrivacy(controller: PrivacyController): PrivacySnapshot {
   return useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot)
 }
@@ -995,7 +983,7 @@ function ModelView({ controller, snapshot, t }: {
   ]
   const statusKey = (mode: DetectorMode): PrivacyKey => {
     const status = snapshot.detectorStates[mode].status
-    if (status === 'ready') return mode === 'regex' ? 'model.running' : 'model.ready'
+    if (status === 'ready') return mode === snapshot.detectorMode ? 'model.running' : 'model.ready'
     if (status === 'loading') return 'model.loading'
     if (status === 'partial') return 'model.partial'
     if (status === 'error') return 'model.error'
