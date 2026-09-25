@@ -9,7 +9,7 @@
 [![CI](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0ca66d.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/DeepSeek%20Harness-Web%20%7C%20Desktop%20Web%20Surface-1769d1.svg)](https://github.com/deepseek-ai/deepseek-harness)
-[![Version](https://img.shields.io/badge/version-alpha.21-f0a51b.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-alpha.24-f0a51b.svg)](package.json)
 
 [🚀 上传到 DeepSeek Stream](https://deepseek.stream/upload) · [📚 开发指南](https://deepseek.stream/guide) · [💬 ZeroClave 社区](https://zeroclave.com/community)
 
@@ -40,7 +40,7 @@
 - 可切换“自动脱敏”：检测成功后直接发送脱敏文本。
 - 在确认界面逐项编辑脱敏值、取消某一项保护，或使用“撤销”恢复保护。
 - 支持自定义敏感实体、正则规则，以及规则的新增、编辑、复制、启用、停用和删除。
-- 在浏览器中保存本地替换映射，使消息显示和复制时可以恢复原文；映射不发送给模型。
+- 支持还原：模型回复保留替换标记时，可在消息显示和复制时恢复对应内容。
 - 可选匿名使用统计，默认由部署配置决定，用户始终可以关闭。
 
 ## 检测方式
