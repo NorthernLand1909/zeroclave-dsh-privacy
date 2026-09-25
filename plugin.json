@@ -1,7 +1,7 @@
 {
   "id": "zeroclave-privacy",
   "name": "ZeroClave Privacy Firewall",
-  "version": "0.1.0-alpha.21",
+  "version": "0.1.0-alpha.24",
   "description": "Detect and redact sensitive information before DeepSeek Harness sends a message to a model.",
   "author": "ZeroClave",
   "platform": "web",

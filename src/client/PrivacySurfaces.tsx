@@ -10,7 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { PrivacyController } from '../controller.ts'
 import type {
   DetectorMode, PrivacyFinding, PrivacySnapshot, RiskLevel, ScanResult,
-  EditableRegexRule, EntityType, FindingCategory, RegexErrorCode,
+  EditableRegexRule, EntityType, FindingCategory, RegexErrorCode, PrivacyLiveState,
 } from '../types.ts'
 import { DEFAULT_REGEX_RULES } from '../detector.ts'
 import { RULE_ENTITY_TYPES } from '../regex-rules.ts'
@@ -591,6 +591,29 @@ function DetectionView({ controller, live, sessionId, t }: {
   return <div className={css.detectionView}><AuditView controller={controller} live={live} sessionId={sessionId} t={t} /></div>
 }
 
+function reviewLiveState(review: PrivacySnapshot['pendingSendReview']): PrivacyLiveState | undefined {
+  const first = review?.parts[0]
+  if (first === undefined) return undefined
+  return { text: first.text, result: first.result, updatedAt: 0 }
+}
+
+function latestLiveState(snapshot: PrivacySnapshot, sessionId: string | undefined): {
+  sessionId: string | undefined
+  live: PrivacyLiveState | undefined
+} {
+  const current = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
+  if (current !== undefined) return { sessionId, live: current }
+  let latestSessionId: string | undefined
+  let latest: PrivacyLiveState | undefined
+  for (const [candidateSessionId, candidate] of snapshot.liveBySession) {
+    if (latest === undefined || candidate.updatedAt > latest.updatedAt) {
+      latestSessionId = candidateSessionId
+      latest = candidate
+    }
+  }
+  return { sessionId: latestSessionId, live: latest }
+}
+
 function ruleErrorKey(code: RegexErrorCode): PrivacyKey { return `rules.error.${code}` }
 
 function emptyRule(): EditableRegexRule {
@@ -935,7 +958,12 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
   const snapshot = usePrivacy(controller)
   const drawerBodyRef = useRef<HTMLDivElement>(null)
   const sessionId = useSessions(state => state.current)
-  const live = sessionId === undefined ? undefined : snapshot.liveBySession.get(sessionId)
+  const liveState = latestLiveState(snapshot, sessionId)
+  const live = liveState.live
+  const review = snapshot.pendingSendReview
+  const reviewLive = reviewLiveState(review)
+  const displayedLive = reviewLive ?? live
+  const displayedSessionId = review?.sessionId ?? liveState.sessionId
   const [sending, setSending] = useState(false)
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
     ['audit', 'tab.audit'],
@@ -978,10 +1006,10 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
         ))}
       </nav>
       <div className={css.drawerBody} data-zero-privacy-scroll ref={drawerBodyRef}>
-        {snapshot.pendingSendReview !== undefined ? (
-          <AuditView controller={controller} live={live} sessionId={sessionId} t={t} />
+        {review !== undefined ? (
+          <AuditView controller={controller} live={displayedLive} sessionId={displayedSessionId} t={t} />
         ) : null}
-        {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'audit' ? (
+        {review === undefined && snapshot.activeTab === 'audit' ? (
           <DetectionView
             controller={controller}
             live={live}
@@ -989,9 +1017,9 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
             t={t}
           />
         ) : null}
-        {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'rules'
+        {review === undefined && snapshot.activeTab === 'rules'
           ? <RulesView controller={controller} snapshot={snapshot} t={t} /> : null}
-        {snapshot.pendingSendReview === undefined && snapshot.activeTab === 'model'
+        {review === undefined && snapshot.activeTab === 'model'
           ? <ModelView controller={controller} snapshot={snapshot} t={t} /> : null}
       </div>
       <footer className={css.drawerFooter}>

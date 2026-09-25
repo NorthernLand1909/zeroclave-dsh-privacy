@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, posix, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const MAX_ARCHIVE_BYTES = 20 * 1024 * 1024
 const MAX_UNPACKED_BYTES = 15 * 1024 * 1024
@@ -106,6 +107,19 @@ async function main() {
       if (entry.endsWith('.js') && /sourceMappingURL=.*\.map(?:\s|$)/.test(content)) {
         fail(`published JavaScript references an unavailable source map: ${entry}`)
       }
+    }
+    const hostEntry = await readFile(resolve(output, 'package/lib/index.js'), 'utf8')
+    if (/["']@deepseek-ai\/(?:schemastery|cosmokit)(?:\/[^"']*)?["']/.test(hostEntry)) {
+      fail('Host entry keeps a vendored schema dependency external; local Desktop imports must be self-contained')
+    }
+    const importCheck = spawnSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `await import(${JSON.stringify(pathToFileURL(resolve(output, 'package/lib/index.js')).href)})`,
+    ], { cwd: output, encoding: 'utf8' })
+    if (importCheck.error !== undefined || importCheck.status !== 0) {
+      const detail = importCheck.stderr.trim() || importCheck.error?.message || `exit ${importCheck.status}`
+      fail(`Host entry cannot be imported without an installed plugin dependency: ${detail}`)
     }
     if (unpackedBytes > MAX_UNPACKED_BYTES) fail(`unpacked artifact exceeds ${MAX_UNPACKED_BYTES} bytes`)
 

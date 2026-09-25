@@ -3,7 +3,32 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { clientBundle } from '../../client/tsdown.client.ts'
 
-const bundle = clientBundle('@zeroclave/dsh-privacy', ['lib/types/index.js'])
+// The desktop importer can activate a local ZIP before pnpm has materialized
+// its dependency tree. Keep the Host entry self-contained for that path; the
+// schema library has no shared runtime identity and is safe to inline.
+const bundle = clientBundle('@zeroclave/dsh-privacy', ['lib/types/index.js'], {
+  lib: {
+    inputOptions: {
+      resolve: {
+        alias: {
+          '@deepseek-ai/cosmokit': fileURLToPath(new URL('../../../vendor/cosmokit/src/index.ts', import.meta.url)),
+          '@deepseek-ai/schemastery': fileURLToPath(new URL('../../../vendor/schemastery/src/index.ts', import.meta.url)),
+        },
+      },
+    },
+    deps: {
+      alwaysBundle: (specifier: string) => specifier === '@deepseek-ai/schemastery'
+        || specifier === '@deepseek-ai/cosmokit'
+        || (!specifier.startsWith('node:')
+          && specifier !== 'lucide'
+          && !specifier.startsWith('@deepseek-ai/')),
+      neverBundle: (specifier: string) => specifier === 'lucide'
+        || (specifier.startsWith('@deepseek-ai/')
+          && specifier !== '@deepseek-ai/schemastery'
+          && specifier !== '@deepseek-ai/cosmokit'),
+    },
+  },
+})
 const transformersRoot = realpathSync(fileURLToPath(new URL(
   './node_modules/@huggingface/transformers',
   import.meta.url,
