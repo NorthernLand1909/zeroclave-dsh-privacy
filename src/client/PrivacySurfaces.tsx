@@ -787,7 +787,7 @@ function LocalModelActions({ controller, snapshot, t, state }: { controller: Pri
     if (kind === 'model') setModelFile(file)
     else setManifestFile(file)
   }
-  return <div className={css.modelActions}>
+  return <div className={`${css.modelActions} ${css.localModelActions}`}>
     <label><span>{t('model.chooseModel')}</span><input type="file" accept=".gguf,application/octet-stream" onChange={event => { choose('model', event.target.files?.[0]) }} /></label>
     <label><span>{t('model.chooseManifest')}</span><input type="file" accept="application/json,.json" onChange={event => { choose('manifest', event.target.files?.[0]) }} /></label>
     <button className={css.primaryButton} type="button" disabled={modelFile === undefined || manifestFile === undefined || state.status === 'loading'} onClick={() => { if (modelFile !== undefined && manifestFile !== undefined) void controller.selectLocalModel(modelFile, manifestFile).then(() => controller.loadLocalModel()).catch(() => undefined) }}>
