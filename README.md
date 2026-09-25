@@ -214,6 +214,17 @@ rsync -a --include='*/' --include='*.d.ts' --exclude='*' \
 
 GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执行类型检查、构建、单元/集成测试和安装包审计。push 和手动运行会上传 `.tgz`、Stream 用 `.zip` 以及对应的 SHA-256 校验文件。
 
+## GitHub Release
+
+正式发布时，先确认 `package.json` 和 `plugin.json` 版本一致，再创建同版本标签：
+
+```bash
+git tag -a v0.1.0-alpha.24 -m "Release v0.1.0-alpha.24"
+git push origin v0.1.0-alpha.24
+```
+
+推送 `v*` 标签会触发 CI。所有检查通过后，Actions 会自动创建 GitHub Release，并附上 `.zip`、`.tgz` 和 SHA-256 校验文件。版本标签必须去掉 `v` 后与包版本完全一致。
+
 ## 本地安装到 DSH
 
 在匹配的 Harness checkout 中执行：

@@ -6,6 +6,8 @@ on:
     branches:
       - main
       - alpha
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -149,3 +151,39 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download package artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts
+          gh run download "$GITHUB_RUN_ID" \
+            --name "zeroclave-dsh-privacy-${GITHUB_SHA}" \
+            --dir artifacts
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_file="$(find artifacts -maxdepth 1 -name '*.tgz' -print -quit)"
+          package_version="$(basename "$package_file" .tgz)"
+          package_version="${package_version#zeroclave-dsh-privacy-}"
+          test "$tag_version" = "$package_version"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            artifacts/*.tgz artifacts/*.zip artifacts/*.sha256 \
+            --title "ZeroClave Privacy Firewall ${GITHUB_REF_NAME#v}" \
+            --generate-notes
