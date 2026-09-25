@@ -1,8 +1,37 @@
-# ZeroClave Privacy Firewall for DeepSeek Harness
+<div align="center">
 
-ZeroClave Privacy Firewall 是一个面向 DeepSeek Harness Web UI 的隐私检测插件。它在消息进入模型前检测敏感实体，并根据发送策略让用户确认、编辑或自动替换脱敏结果。
+# 🛡️ ZeroClave Privacy Firewall
 
-当前版本为 alpha。插件只检测消息文本；图片、文件、音频、工具参数和附件元数据不在检测范围内。
+### 面向 DeepSeek Harness 的本地优先隐私守护插件
+
+在消息发送给模型之前，发现敏感实体、展示脱敏结果，并让用户决定什么可以离开浏览器。
+
+[![CI](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-0ca66d.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/DeepSeek%20Harness-Web%20%7C%20Desktop%20Web%20Surface-1769d1.svg)](https://github.com/deepseek-ai/deepseek-harness)
+[![Version](https://img.shields.io/badge/version-alpha.21-f0a51b.svg)](package.json)
+
+[🚀 上传到 DeepSeek Stream](https://deepseek.stream/upload) · [📚 开发指南](https://deepseek.stream/guide) · [💬 ZeroClave 社区](https://zeroclave.com/community)
+
+</div>
+
+> [!WARNING]
+> 当前版本仍处于 alpha。插件只检测消息文本；图片、文件、音频、工具参数和附件元数据不在检测范围内。检测结果不是合规保证，仍可能存在误报和漏报。
+
+## ✨ 为什么使用 ZeroClave
+
+| 🧭 先看再发 | 🔐 默认不改草稿 | 🧩 三种检测器 |
+| --- | --- | --- |
+| 发送前查看当前输入、敏感实体和脱敏输出 | 原文留在 composer，只有确认后的内容发送给模型 | 本地正则、浏览器本地 BERT、ZeroClave Gateway |
+
+## ⚡ 三步工作流
+
+```text
+输入消息  →  检测敏感实体  →  编辑/取消保护/确认脱敏  →  发送
+                         ↘  发送失败：保留原草稿
+```
+
+手动确认模式下，按回车会进入同一个隐私检测面板；用户可以逐项修改脱敏值、取消保护或撤销。点击“确认脱敏并发送”后，才会继续发送。
 
 ## 功能概览
 
@@ -205,6 +234,26 @@ pnpm dsh web --no-open
 - 本地恢复映射不跨浏览器、设备或 origin 同步。
 - 自定义规则使用 JavaScript 正则语法，当前没有 RE2 导入/导出功能。
 - 浏览器历史、搜索和非 Chat 视图可能只保留 Host 侧的脱敏表示。
+
+## 💬 社区与支持
+
+微信群、版本公告、安装指引和反馈入口统一维护在 ZeroClave Community：
+
+<div align="center">
+
+### [进入 ZeroClave Community →](https://zeroclave.com/community)
+
+获取最新群组入口、插件发布信息和社区支持。请不要在 README 或 issue 中公开分享个人邀请链接、内部部署地址或遥测配置。
+
+</div>
+
+## 🌐 发布与安装
+
+- **DeepSeek Stream**：上传 CI 生成的 `.zip`，包内包含 `plugin.json`、`package.json`、`cordis.patch.yml`、`README.md`、`LICENSE` 和 `lib/`。
+- **本地 DSH**：使用匹配 Harness workspace 构建出的 `.tgz`，通过 `dsh plugin --profile web add` 安装。
+- **桌面 GUI**：插件是 Web client + Host 插件，可以随 Desktop 内嵌的 DSH Web Surface 加载；当前 manifest 仍声明为 `platform: web`，桌面原生能力不在插件范围内。
+
+发布包、CI、安装和版本兼容性说明见上面的“构建和测试”章节。
 
 ## 许可证
 
