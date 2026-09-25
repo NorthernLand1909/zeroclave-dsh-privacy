@@ -7,11 +7,12 @@ import {
 } from './regex-rules.ts'
 import type { RegexExecutor } from './regex-rules.ts'
 import { ZeroClaveDetectError, ZeroClaveDetector } from './zeroclave-detector.ts'
+import { LocalModelDetector, LocalModelError } from './local-model.ts'
 import { PrivacyTelemetry } from './telemetry.ts'
 import type { TelemetryDetector, TelemetryEvent, TelemetryReporter } from './telemetry.ts'
 import type {
   DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
-  PrivacyFinding,
+  PrivacyFinding, LocalModelMetadata,
 } from './types.ts'
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
@@ -113,6 +114,7 @@ export class PrivacyController {
     } }
   }
   private readonly embedded = new EmbeddedModelDetector()
+  private readonly localModel = new LocalModelDetector()
   private readonly storedRules = loadRegexRules()
   private settingsError = this.storedRules.error
   private readonly lifetime = new AbortController()
@@ -131,6 +133,7 @@ export class PrivacyController {
       regex: { status: 'ready' },
       embedded: { status: 'idle' },
       zeroclave: { status: 'idle' },
+      'local-model': { status: 'unconfigured' },
     },
     liveBySession: new Map(),
     regexRules: this.storedRules.rules,
@@ -317,10 +320,48 @@ export class PrivacyController {
 
   scan(text: string): ScanResult {
     if (!this.snapshot.enabled) return disabledResult(text, this.snapshot.detectorMode)
-    if (this.snapshot.detectorMode === 'zeroclave') {
-      return finalizeScan(text, [], 'zeroclave', 'zeroclave', false)
+    if (this.snapshot.detectorMode === 'zeroclave') return finalizeScan(text, [], 'zeroclave', 'zeroclave', false)
+    if (this.snapshot.detectorMode === 'local-model') {
+      const unavailable = finalizeScan(text, [], 'local-model', 'local-model', false)
+      return text.length === 0 ? unavailable : {
+        ...unavailable,
+        recommendedAction: 'block',
+        detector: { requested: 'local-model', used: 'local-model', fallback: false, status: 'partial' },
+      }
     }
     return scanRegex(text, this.snapshot.detectorMode, this.snapshot.regexRules)
+  }
+
+  async selectLocalModel(modelFile: Blob & { name?: string }, manifestFile: Blob): Promise<LocalModelMetadata> {
+    try {
+      const metadata = await this.localModel.select(modelFile, manifestFile)
+      this.update({ ...this.snapshot, localModel: metadata, detectorStates: {
+        ...this.snapshot.detectorStates, 'local-model': { status: 'idle' },
+      } })
+      return metadata
+    } catch (error) {
+      const code = error instanceof LocalModelError ? error.code : 'manifest_invalid'
+      this.setDetectorState('local-model', { status: 'error', code, error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
+
+  async loadLocalModel(): Promise<void> {
+    this.setDetectorState('local-model', { status: 'loading', progress: 0 })
+    try {
+      await this.localModel.load(progress => { this.setDetectorState('local-model', { status: 'loading', progress }) }, this.lifetime.signal)
+      this.setDetectorState('local-model', { status: 'ready', progress: 100 })
+    } catch (error) {
+      if (this.lifetime.signal.aborted) return
+      this.setDetectorState('local-model', { status: 'error', code: error instanceof LocalModelError ? error.code : 'runtime_unavailable', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  async unloadLocalModel(): Promise<void> {
+    await this.localModel.unload()
+    const { localModel: _localModel, ...withoutModel } = this.snapshot
+    void _localModel
+    this.update({ ...withoutModel, detectorStates: { ...this.snapshot.detectorStates, 'local-model': { status: 'unconfigured' } } })
   }
 
   saveRule(rule: EditableRegexRule): void {
@@ -374,10 +415,12 @@ export class PrivacyController {
     let zeroClaveOwner: number | undefined
     try {
       if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
-      const candidates = requested === 'zeroclave'
+      const candidates = requested === 'zeroclave' || requested === 'local-model'
         ? []
         : await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
-      if (requested === 'zeroclave') {
+      if (requested === 'local-model') {
+        result = await this.localModel.scan(text, signal)
+      } else if (requested === 'zeroclave') {
         zeroClaveOwner = this.beginZeroClaveOperation()
         const [remote] = await this.zeroclave.scanBatch([{
           id: 'draft', revision: `r-${randomUUID()}`, text, regex: [],
@@ -408,7 +451,9 @@ export class PrivacyController {
       }
       if (requested === 'zeroclave') this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))
       else this.setDetectorState(requested, {
-        status: 'error', error: error instanceof Error ? error.message : String(error),
+        status: 'error',
+        ...(requested === 'local-model' && error instanceof LocalModelError ? { code: error.code } : {}),
+        error: error instanceof Error ? error.message : String(error),
       })
       return
     } finally {
@@ -538,6 +583,9 @@ export class PrivacyController {
             status: 'ready',
             ...(scanned[0]?.detector.requestId === undefined ? {} : { requestId: scanned[0].detector.requestId }),
           })
+        } else if (requested === 'local-model') {
+          scanned = []
+          for (const text of texts) scanned.push(await this.localModel.scan(text, signal))
         } else {
           scanned = []
           for (const [index, text] of texts.entries()) {
@@ -552,6 +600,8 @@ export class PrivacyController {
         if (requested === 'zeroclave' && !signal.aborted
           && !(error instanceof ZeroClaveDetectError && error.code === 'partial_result')) {
           if (this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))) this.showDetectorDetails()
+        } else if (requested === 'local-model' && !signal.aborted) {
+          this.setDetectorState('local-model', { status: 'error', code: error instanceof LocalModelError ? error.code : 'runtime_unavailable', error: error instanceof Error ? error.message : String(error) })
         }
         throw error
       }
@@ -696,6 +746,7 @@ export class PrivacyController {
     this.customFindings.clear()
     this.listeners.clear()
     await this.embedded.dispose()
+    await this.localModel.unload()
     await this.vault.dispose()
     await this.telemetryReporter.dispose()
   }

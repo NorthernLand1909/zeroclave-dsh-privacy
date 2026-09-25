@@ -1,4 +1,4 @@
-export type DetectorMode = 'regex' | 'embedded' | 'zeroclave'
+export type DetectorMode = 'regex' | 'embedded' | 'zeroclave' | 'local-model'
 
 export type RiskLevel = 'none' | 'medium' | 'high' | 'critical'
 
@@ -129,6 +129,21 @@ export interface DetectorProvider {
   scan(text: string, signal?: AbortSignal): Promise<ScanResult>
 }
 
+/** Metadata retained for the current local model session. Model bytes are never persisted. */
+export interface LocalModelMetadata {
+  modelId: string
+  version: string
+  architecture: string
+  format: 'gguf'
+  fileName: string
+  fileSize: number
+  fileSha256: string
+  quantization: string
+  contextLength: number
+  languages: readonly string[]
+  outputProtocolVersion: string
+}
+
 export interface PrivacyLiveState {
   text: string
   result: ScanResult
@@ -142,6 +157,7 @@ export interface PrivacySnapshot {
   activeTab: 'audit' | 'rules' | 'model'
   detectorMode: DetectorMode
   detectorStates: Readonly<Record<DetectorMode, DetectorRuntimeState>>
+  localModel?: LocalModelMetadata
   liveBySession: ReadonlyMap<string, PrivacyLiveState>
   regexRules: readonly EditableRegexRule[]
   regexRevision: number
