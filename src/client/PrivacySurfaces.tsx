@@ -83,6 +83,7 @@ const DETECTOR_KEYS: Record<DetectorMode, PrivacyKey> = {
   regex: 'source.regex',
   embedded: 'source.embedded',
   zeroclave: 'source.zeroclave',
+  'local-model': 'model.localModel',
 }
 
 const RISK_KEYS: Record<RiskLevel, PrivacyKey> = {
@@ -267,7 +268,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
     const abort = new AbortController()
     const delay = snapshot.detectorMode === 'zeroclave'
       ? 650
-      : snapshot.detectorMode === 'embedded' ? 300 : 0
+      : snapshot.detectorMode === 'embedded' || snapshot.detectorMode === 'local-model' ? 300 : 0
     const timer = window.setTimeout(() => {
       void controller.inspect(sessionId, draft, abort.signal)
     }, delay)
@@ -779,6 +780,25 @@ function RulesView({ controller, snapshot, t }: {
   )
 }
 
+function LocalModelActions({ controller, snapshot, t, state }: { controller: PrivacyController; snapshot: PrivacySnapshot; t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
+  const [modelFile, setModelFile] = useState<File>()
+  const [manifestFile, setManifestFile] = useState<File>()
+  const choose = (kind: 'model' | 'manifest', file: File | undefined): void => {
+    if (kind === 'model') setModelFile(file)
+    else setManifestFile(file)
+  }
+  return <div className={css.modelActions}>
+    <label><span>{t('model.chooseModel')}</span><input type="file" accept=".gguf,application/octet-stream" onChange={event => { choose('model', event.target.files?.[0]) }} /></label>
+    <label><span>{t('model.chooseManifest')}</span><input type="file" accept="application/json,.json" onChange={event => { choose('manifest', event.target.files?.[0]) }} /></label>
+    <button className={css.primaryButton} type="button" disabled={modelFile === undefined || manifestFile === undefined || state.status === 'loading'} onClick={() => { if (modelFile !== undefined && manifestFile !== undefined) void controller.selectLocalModel(modelFile, manifestFile).then(() => controller.loadLocalModel()).catch(() => undefined) }}>
+      {state.status === 'loading' ? t('model.loading') : t('model.loadLocal')}
+    </button>
+    {snapshot.localModel !== undefined ? <small>{`${t('model.localSelected')}: ${snapshot.localModel.modelId} · ${snapshot.localModel.architecture} · ${snapshot.localModel.version} · ${snapshot.localModel.quantization} · ${String(snapshot.localModel.fileSize)} bytes`}</small> : null}
+    {state.error !== undefined ? <code>{state.code === undefined ? state.error : `${state.code}: ${state.error}`}</code> : null}
+    <small>{t('model.localRuntimeNotice')}</small>
+  </div>
+}
+
 function ModelView({ controller, snapshot, t }: {
   controller: PrivacyController
   snapshot: PrivacySnapshot
@@ -788,6 +808,7 @@ function ModelView({ controller, snapshot, t }: {
     ['zeroclave', 'model.zeroclave', 'model.zeroclaveDesc'],
     ['regex', 'model.regex', 'model.regexDesc'],
     ['embedded', 'model.embedded', 'model.embeddedDesc'],
+    ['local-model', 'model.localModel', 'model.localModelDesc'],
   ]
   const statusKey = (mode: DetectorMode): PrivacyKey => {
     const status = snapshot.detectorStates[mode].status
@@ -799,6 +820,7 @@ function ModelView({ controller, snapshot, t }: {
     return mode === 'zeroclave' ? 'model.untested' : 'model.idle'
   }
   const embeddedState = snapshot.detectorStates.embedded
+  const localModelState = snapshot.detectorStates['local-model']
   const zeroClaveState = snapshot.detectorStates.zeroclave
   const showTelemetry = snapshot.telemetry.availability === 'available' || snapshot.telemetry.consent
   const [telemetryDetailsOpen, setTelemetryDetailsOpen] = useState(false)
@@ -851,6 +873,7 @@ function ModelView({ controller, snapshot, t }: {
           ))}
         </div>
       </section>
+      {snapshot.detectorMode === 'local-model' ? <LocalModelActions controller={controller} snapshot={snapshot} t={t} state={localModelState} /> : null}
       {snapshot.detectorMode === 'embedded' ? (
         <div className={css.modelActions}>
           <button

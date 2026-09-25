@@ -1,5 +1,5 @@
 export type TelemetryEvent = 'privacy_active' | 'protected_send' | 'detector_used'
-export type TelemetryDetector = 'regex' | 'embedded' | 'zeroclave'
+export type TelemetryDetector = 'regex' | 'embedded' | 'zeroclave' | 'local-model'
 export type TelemetryAvailability = 'checking' | 'available' | 'unavailable'
 
 export interface TelemetryClaim {

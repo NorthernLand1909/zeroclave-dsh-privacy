@@ -42,6 +42,7 @@ export type PrivacyKey =
   | 'model.gatewayRoute' | 'model.partialDetail' | 'model.requestId' | 'model.textOnly'
   | 'model.download'
   | 'model.embeddedNotice'
+  | 'model.localModel' | 'model.localModelDesc' | 'model.chooseModel' | 'model.chooseManifest' | 'model.loadLocal' | 'model.localSelected' | 'model.localMetadata' | 'model.localRuntimeNotice'
   | 'telemetry.title' | 'telemetry.summary' | 'telemetry.consent' | 'telemetry.on' | 'telemetry.off'
   | 'telemetry.checking' | 'telemetry.unavailable' | 'telemetry.gpc' | 'telemetry.detail' | 'telemetry.network'
   | 'telemetry.detailsLink' | 'telemetry.detailParagraph1' | 'telemetry.detailParagraph2' | 'telemetry.detailParagraph3'
@@ -197,6 +198,14 @@ export const zh: Record<PrivacyKey, string> = {
   'model.textOnly': '当前只检测消息文本，图片和文件附件不在隐私检测范围内。ZeroClave 检测失败或结果不完整时，不会视为安全，并会阻止发送。',
   'model.download': '首次加载约下载 29 MB 量化模型，文件由浏览器缓存',
   'model.embeddedNotice': '该 BERT 模型主要面向英文，中文合同建议使用本地正则。BERT 不可用时，可明确回退到本地正则。',
+  'model.localModel': '自定义本地模型',
+  'model.localModelDesc': '选择 GGUF 与配套 manifest；原文和模型文件只在本地处理。',
+  'model.chooseModel': '选择 GGUF 文件',
+  'model.chooseManifest': '选择 manifest JSON',
+  'model.loadLocal': '加载本地模型',
+  'model.localSelected': '已选择',
+  'model.localMetadata': '模型信息',
+  'model.localRuntimeNotice': '当前版本只完成文件与协议校验；WebGPU 运行时由适配器提供。未就绪时发送会被阻止。',
   'telemetry.title': '共享匿名使用统计',
   'telemetry.summary': '帮助我们了解隐私检测功能的使用情况。',
   'telemetry.consent': '共享匿名使用统计',
@@ -394,6 +403,14 @@ export const en: Record<PrivacyKey, string> = {
   'model.textOnly': 'Only message text is checked; images and file attachments are outside the privacy detection scope. A failed or incomplete ZeroClave result is never treated as safe and blocks sending.',
   'model.download': 'First load downloads about 29 MB of quantized weights into the browser cache',
   'model.embeddedNotice': 'This BERT model is mainly intended for English. For Chinese contracts, local regex is recommended. If BERT is unavailable, you can explicitly fall back to local regex.',
+  'model.localModel': 'Custom local model',
+  'model.localModelDesc': 'Choose a GGUF file and its manifest; text and model bytes stay local.',
+  'model.chooseModel': 'Choose GGUF file',
+  'model.chooseManifest': 'Choose manifest JSON',
+  'model.loadLocal': 'Load local model',
+  'model.localSelected': 'Selected',
+  'model.localMetadata': 'Model information',
+  'model.localRuntimeNotice': 'This version validates the file and protocol contract; a WebGPU runtime is supplied by an adapter. Sending is blocked until ready.',
   'telemetry.title': 'Share anonymous usage statistics',
   'telemetry.summary': 'Help us understand how privacy detection is used.',
   'telemetry.consent': 'Share anonymous usage metrics',

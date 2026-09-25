@@ -71,3 +71,6 @@ export {
   ZeroClaveDetector,
 } from './zeroclave-detector.ts'
 export type * from './types.ts'
+
+export { LocalModelDetector, LocalModelError, WebWorkerModelRuntimeAdapter, parseGguf, parseManifest, validateLocalModel } from './local-model.ts'
+export type { ModelManifest, ModelRuntimeAdapter, ParsedGguf, ValidatedLocalModel } from './local-model.ts'
