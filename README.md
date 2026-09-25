@@ -87,7 +87,7 @@ https://zeroclave.com/v1/pii/detect
 
 ## 匿名使用统计
 
-Plausible 模式下，浏览器直接向 Plausible Events API 提交固定白名单事件。ZeroClave 遥测服务（如启用）使用匿名 Host 中继：
+插件支持可选的匿名使用统计。统计服务和接收地址属于具体部署配置，不在开源项目中固定或公开：
 
 - `privacy_active`：是否执行了隐私检测；
 - `protected_send`：受保护的请求是否成功发送；
@@ -95,17 +95,7 @@ Plausible 模式下，浏览器直接向 Plausible Events API 提交固定白名
 
 事件不包含输入文本、命中内容、规则、会话内容、错误、请求 ID 或设备属性。事件可能被伪造，因此只适合观察近似产品趋势，不适合计费、安全决策或精确 DAU。
 
-部署配置中的 `telemetryEnabled` 控制是否提供遥测能力。官方配置使用 Plausible 时，可以这样配置：
-
-```yaml
-telemetryProvider: plausible
-telemetryEnabled: true
-telemetryEndpoint: https://plausible.io/api/event
-telemetrySite: zeroclave-dsh-privacy
-telemetryTimeoutMs: 2000
-```
-
-用户可以在“检测设置”关闭“共享匿名使用统计”。浏览器的 Global Privacy Control（GPC）也会强制关闭该选项。Plausible 可能处理请求中的连接元数据，例如 IP 地址；插件不会主动发送文本或检测结果。浏览器请求使用 `credentials: omit`、`no-referrer` 和固定的 `app://zeroclave-dsh-privacy/` URL，不发送每日 ID。
+部署配置中的 `telemetryEnabled` 控制是否提供遥测能力。用户可以在“检测设置”关闭“共享匿名使用统计”；Global Privacy Control（GPC）也会强制关闭该选项。启用后，配置的统计服务可能处理连接元数据，但插件不会发送文本、命中内容、规则、会话内容或每日 ID。事件可能被伪造，因此只适合观察近似产品趋势。
 
 ## 配置
 
@@ -118,10 +108,7 @@ telemetryTimeoutMs: 2000
       config:
         gatewayBaseURL: https://zeroclave.com/v1
         timeoutMs: 15000
-        telemetryProvider: plausible
-        telemetryEnabled: true
-        telemetryEndpoint: https://plausible.io/api/event
-        telemetrySite: zeroclave-dsh-privacy
+        telemetryEnabled: false
         telemetryTimeoutMs: 2000
 ```
 
@@ -132,12 +119,9 @@ telemetryTimeoutMs: 2000
 | `gatewayBaseURL` | ZeroClave Gateway 基础地址，只允许 HTTPS；本机回环地址可使用 HTTP | `https://zeroclave.com/v1` |
 | `timeoutMs` | ZeroClave 检测超时时间，范围 100 至 30000 ms | `15000` |
 | `telemetryEnabled` | 是否向浏览器提供遥测能力 | `false` |
-| `telemetryProvider` | `zeroclave` 或 `plausible` | `zeroclave` |
-| `telemetryEndpoint` | 遥测接收地址 | `https://telemetry.zeroclave.ai` |
-| `telemetrySite` | Plausible site 名称 | `zeroclave-dsh-privacy` |
 | `telemetryTimeoutMs` | 遥测中继超时时间，范围 100 至 10000 ms | `2000` |
 
-`telemetryEnabled: true` 只表示部署提供遥测能力，不代表用户无法关闭；浏览器端仍受用户选择和 GPC 控制。
+开源默认关闭遥测。下游部署如需启用，应在自己的部署配置中选择 provider、endpoint 和站点标识，不要把内部地址或密钥提交到公开仓库。
 
 ## 构建和测试
 
