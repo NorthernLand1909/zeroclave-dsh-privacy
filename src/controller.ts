@@ -106,7 +106,16 @@ export class PrivacyController {
     private readonly executeRegex: RegexExecutor = runRegexWorker,
     private readonly zeroclave = new ZeroClaveDetector(),
     private readonly telemetryReporter: TelemetryReporter = new PrivacyTelemetry(),
+    localModel = new LocalModelDetector(),
   ) {
+    this.localModel = localModel
+    this.localModel.setRuntimeEventListener((event) => {
+      if (!this.lifetime.signal.aborted) {
+        this.setDetectorState('local-model', {
+          status: 'error', code: event.code, error: event.message, inferenceStatus: 'error',
+        })
+      }
+    })
     this.snapshot = { ...this.snapshot, telemetry: {
       consent: this.telemetryReporter.consent,
       availability: 'checking',
@@ -114,7 +123,7 @@ export class PrivacyController {
     } }
   }
   private readonly embedded = new EmbeddedModelDetector()
-  private readonly localModel = new LocalModelDetector()
+  private readonly localModel: LocalModelDetector
   private readonly storedRules = loadRegexRules()
   private settingsError = this.storedRules.error
   private readonly lifetime = new AbortController()
@@ -333,6 +342,9 @@ export class PrivacyController {
   }
 
   async selectLocalModel(modelFile: Blob & { name?: string }, manifestFile: Blob): Promise<LocalModelMetadata> {
+    // Selecting a replacement releases the old Worker/model and invalidates every in-flight
+    // result before the new model can become selectable.
+    this.cancelActiveOperations()
     try {
       const metadata = await this.localModel.select(modelFile, manifestFile)
       this.update({ ...this.snapshot, localModel: metadata, detectorStates: {
@@ -341,7 +353,14 @@ export class PrivacyController {
       return metadata
     } catch (error) {
       const code = error instanceof LocalModelError ? error.code : 'manifest_invalid'
-      this.setDetectorState('local-model', { status: 'error', code, error: error instanceof Error ? error.message : String(error) })
+      // LocalModelDetector clears its selected reference before validation. Mirror that in the
+      // snapshot so a rejected replacement cannot leave stale model metadata in the UI.
+      const { localModel: _localModel, ...withoutModel } = this.snapshot
+      void _localModel
+      this.update({ ...withoutModel, detectorStates: {
+        ...this.snapshot.detectorStates,
+        'local-model': { status: 'error', code, error: error instanceof Error ? error.message : String(error) },
+      } })
       throw error
     }
   }
@@ -350,15 +369,23 @@ export class PrivacyController {
     this.setDetectorState('local-model', { status: 'loading', progress: 0 })
     try {
       await this.localModel.load(progress => { this.setDetectorState('local-model', { status: 'loading', progress }) }, this.lifetime.signal)
-      this.setDetectorState('local-model', { status: 'ready', progress: 100 })
+      this.setDetectorState('local-model', { status: 'ready', progress: 100, inferenceStatus: 'idle' })
     } catch (error) {
       if (this.lifetime.signal.aborted) return
-      this.setDetectorState('local-model', { status: 'error', code: error instanceof LocalModelError ? error.code : 'runtime_unavailable', error: error instanceof Error ? error.message : String(error) })
+      this.setLocalModelError(error)
     }
   }
 
   async unloadLocalModel(): Promise<void> {
-    await this.localModel.unload()
+    this.cancelActiveOperations()
+    try {
+      await this.localModel.unload()
+    } finally {
+      this.clearLocalModelSnapshot()
+    }
+  }
+
+  private clearLocalModelSnapshot(): void {
     const { localModel: _localModel, ...withoutModel } = this.snapshot
     void _localModel
     this.update({ ...withoutModel, detectorStates: { ...this.snapshot.detectorStates, 'local-model': { status: 'unconfigured' } } })
@@ -415,11 +442,12 @@ export class PrivacyController {
     let zeroClaveOwner: number | undefined
     try {
       if (this.settingsError !== undefined) throw new RegexRuleError(this.settingsError)
-      const candidates = requested === 'zeroclave' || requested === 'local-model'
+      const candidates = requested === 'zeroclave'
         ? []
         : await scanConfiguredRules(text, this.snapshot.regexRules, this.executeRegex, signal)
       if (requested === 'local-model') {
-        result = await this.localModel.scan(text, signal)
+        this.setDetectorState('local-model', { status: 'ready', inferenceStatus: 'running' })
+        result = await this.localModel.scan(text, signal, candidates)
       } else if (requested === 'zeroclave') {
         zeroClaveOwner = this.beginZeroClaveOperation()
         const [remote] = await this.zeroclave.scanBatch([{
@@ -450,11 +478,8 @@ export class PrivacyController {
         return
       }
       if (requested === 'zeroclave') this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))
-      else this.setDetectorState(requested, {
-        status: 'error',
-        ...(requested === 'local-model' && error instanceof LocalModelError ? { code: error.code } : {}),
-        error: error instanceof Error ? error.message : String(error),
-      })
+      else if (requested === 'local-model') this.setLocalModelError(error, true)
+      else this.setDetectorState(requested, { status: 'error', error: error instanceof Error ? error.message : String(error) })
       return
     } finally {
       if (this.inspections.get(sessionId) === operation) this.inspections.delete(sessionId)
@@ -477,6 +502,7 @@ export class PrivacyController {
       })
     }
     this.updateLive(sessionId, text, result, Math.max(0, Date.now() - startedAt))
+    if (requested === 'local-model') this.setDetectorState('local-model', { status: 'ready', inferenceStatus: 'idle' })
     if (text.length > 0) {
       this.reportTelemetry('privacy_active')
       this.reportTelemetry('detector_used', result.detector.used)
@@ -584,8 +610,9 @@ export class PrivacyController {
             ...(scanned[0]?.detector.requestId === undefined ? {} : { requestId: scanned[0].detector.requestId }),
           })
         } else if (requested === 'local-model') {
+          this.setDetectorState('local-model', { status: 'ready', inferenceStatus: 'running' })
           scanned = []
-          for (const text of texts) scanned.push(await this.localModel.scan(text, signal))
+          for (const [index, text] of texts.entries()) scanned.push(await this.localModel.scan(text, signal, candidates[index] ?? []))
         } else {
           scanned = []
           for (const [index, text] of texts.entries()) {
@@ -601,7 +628,8 @@ export class PrivacyController {
           && !(error instanceof ZeroClaveDetectError && error.code === 'partial_result')) {
           if (this.finishZeroClaveOperation(zeroClaveOwner, this.zeroClaveError(error))) this.showDetectorDetails()
         } else if (requested === 'local-model' && !signal.aborted) {
-          this.setDetectorState('local-model', { status: 'error', code: error instanceof LocalModelError ? error.code : 'runtime_unavailable', error: error instanceof Error ? error.message : String(error) })
+          this.setLocalModelError(error, true)
+          this.showDetectorDetails()
         }
         throw error
       }
@@ -622,6 +650,7 @@ export class PrivacyController {
       signal.throwIfAborted()
       if (!privacyEnabled(this.snapshot) || this.snapshot.detectorMode !== requested
         || this.snapshot.regexRevision !== revision) throw new RegexRuleError('changed')
+      if (requested === 'local-model') this.setDetectorState('local-model', { status: 'ready', inferenceStatus: 'idle' })
       this.reportScanTelemetry(texts, scanned)
       let decisions: SendReviewDecisions | undefined
       if (scanned.some(result => result.findings.length > 0) && this.snapshot.sendPolicy === 'review-manual') {
@@ -815,6 +844,14 @@ export class PrivacyController {
       }
     }
     return { status: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+  private setLocalModelError(error: unknown, duringInference = false): void {
+    const code = error instanceof LocalModelError ? error.code : 'runtime_unavailable'
+    this.setDetectorState('local-model', {
+      status: code === 'partial_result' ? 'partial' : 'error', code,
+      error: error instanceof Error ? error.message : String(error),
+      ...(duringInference ? { inferenceStatus: code === 'partial_result' ? 'partial' as const : 'error' as const } : {}),
+    })
   }
 
   private setDetectorState(mode: DetectorMode, state: DetectorRuntimeState): void {

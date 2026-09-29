@@ -292,6 +292,25 @@ export function mergeModelCandidates(
   return finalizeScan(text, [...regex, ...modelCandidates], 'embedded', 'embedded', false, model)
 }
 
+/** Merge deterministic and semantic findings for a fully completed local-model scan. */
+export function mergeLocalModelCandidates(
+  text: string,
+  modelCandidates: readonly FindingCandidate[],
+  model: string,
+  modelVersion: string,
+  regex: readonly FindingCandidate[] = regexCandidates(text),
+): ScanResult {
+  const result = finalizeScan(text, [...regex, ...modelCandidates], 'local-model', 'local-model', false, model)
+  return {
+    ...result,
+    detector: {
+      ...result.detector,
+      modelVersion,
+      status: 'complete',
+    },
+  }
+}
+
 export type { FindingCandidate }
 
 export class RegexDetector implements DetectorProvider {

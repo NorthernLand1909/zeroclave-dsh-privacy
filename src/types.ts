@@ -98,6 +98,7 @@ export interface ScanResult {
     used: DetectorMode
     fallback: boolean
     model?: string
+    modelVersion?: string
     status?: 'complete' | 'partial'
     requestId?: string
   }
@@ -112,6 +113,7 @@ export interface DetectorRuntimeState {
   code?: string
   statusCode?: number
   requestId?: string
+  inferenceStatus?: 'idle' | 'running' | 'error' | 'partial'
 }
 
 export interface TelemetryRuntimeState {

@@ -1,4 +1,4 @@
-import { finalizeScan, type FindingCandidate } from './detector.ts'
+import { mergeLocalModelCandidates, type FindingCandidate } from './detector.ts'
 import type { DetectorProvider, EntityType, LocalModelMetadata, ScanResult } from './types.ts'
 
 export const MAX_LOCAL_MODEL_BYTES = 8 * 1024 ** 3
@@ -11,7 +11,7 @@ export type LocalModelErrorCode =
   | 'file_too_large' | 'format_invalid' | 'version_unsupported' | 'architecture_unsupported'
   | 'tokenizer_missing' | 'quantization_unsupported' | 'context_too_short' | 'manifest_invalid'
   | 'manifest_architecture_mismatch' | 'manifest_model_mismatch' | 'output_protocol_unsupported'
-  | 'runtime_unavailable' | 'not_configured' | 'not_ready'
+  | 'runtime_unavailable' | 'webgpu_unavailable' | 'device_lost' | 'out_of_memory' | 'load_timeout' | 'inference_timeout' | 'output_invalid' | 'partial_result' | 'not_configured' | 'not_ready'
 
 export class LocalModelError extends Error {
   constructor(readonly code: LocalModelErrorCode, message: string) {
@@ -129,7 +129,8 @@ export async function parseManifest(file: Blob): Promise<ModelManifest> {
   const topP = Number(pickFrom(recommendedGeneration, 'topP', 'top_p'))
   const maxTokens = Number(pickFrom(recommendedGeneration, 'maxTokens', 'max_tokens'))
   const constrainedValue = pick('constrainedJson', 'constrained_json', 'supportsConstrainedJson', 'supports_constrained_json')
-  if (!modelId || !version || !architecture || format === undefined || languages.length === 0 || typeof templateValue !== 'string' || typeof systemValue !== 'string' || !SUPPORTED_OUTPUT_PROTOCOLS.has(outputProtocolVersion) || entityTypes.length === 0 || !Number.isInteger(maxContextLength) || maxContextLength < MIN_CONTEXT_LENGTH || !Number.isFinite(temperature) || !Number.isFinite(topP) || !Number.isInteger(maxTokens) || typeof constrainedValue !== 'boolean') throw new LocalModelError('manifest_invalid', 'Manifest is missing required fields or contains unsafe values')
+  if (!modelId || !version || !architecture || format === undefined || languages.length === 0 || typeof templateValue !== 'string' || typeof systemValue !== 'string' || entityTypes.length === 0 || !Number.isInteger(maxContextLength) || maxContextLength < MIN_CONTEXT_LENGTH || !Number.isFinite(temperature) || !Number.isFinite(topP) || !Number.isInteger(maxTokens) || typeof constrainedValue !== 'boolean') throw new LocalModelError('manifest_invalid', 'Manifest is missing required fields or contains unsafe values')
+  if (!SUPPORTED_OUTPUT_PROTOCOLS.has(outputProtocolVersion)) throw new LocalModelError('output_protocol_unsupported', `Output protocol ${outputProtocolVersion || '(missing)'} is not supported`)
   if (temperature < 0 || temperature > 2 || topP <= 0 || topP > 1 || maxTokens < 1 || maxTokens > maxContextLength) throw new LocalModelError('manifest_invalid', 'Manifest generation parameters are outside safe bounds')
   const fingerprint = pick('modelFileSha256', 'model_file_sha256', 'sha256')
   return { modelId, version, architecture, format, languages, chatTemplate: templateValue, systemPromptVersion: systemValue, outputProtocolVersion, entityTypes, maxContextLength, recommendedGeneration: { temperature, topP, maxTokens }, constrainedJson: constrainedValue, ...(typeof fingerprint === 'string' ? { modelFileSha256: fingerprint.toLowerCase() } : {}) }
@@ -160,6 +161,13 @@ export interface ModelRuntimeAdapter {
   load(model: ValidatedLocalModel, onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<void>
   scan(text: string, signal?: AbortSignal): Promise<readonly FindingCandidate[]>
   unload(): Promise<void>
+  setEventListener?(listener: (event: LocalModelRuntimeEvent) => void): void
+}
+
+/** Runtime events that occur outside a single load or inference promise (for example device loss). */
+export interface LocalModelRuntimeEvent {
+  code: Extract<LocalModelErrorCode, 'device_lost' | 'out_of_memory' | 'runtime_unavailable'>
+  message: string
 }
 
 export class UnavailableModelRuntimeAdapter implements ModelRuntimeAdapter {
@@ -218,13 +226,37 @@ export class LocalModelDetector implements DetectorProvider {
   readonly id = 'local-model' as const
   readonly label = 'Local GGUF model'
   readonly locality = 'browser' as const
-  private selected?: ValidatedLocalModel
+  private selected: ValidatedLocalModel | undefined
   private runtimeReady = false
   constructor(private readonly runtime: ModelRuntimeAdapter = new UnavailableModelRuntimeAdapter()) {}
   available(): boolean { return this.runtimeReady && this.selected !== undefined }
   get metadata(): LocalModelMetadata | undefined { return this.selected?.metadata }
-  async select(modelFile: Blob & { name?: string }, manifestFile: Blob): Promise<LocalModelMetadata> { this.selected = await validateLocalModel(modelFile, manifestFile); this.runtimeReady = false; return this.selected.metadata }
+  setRuntimeEventListener(listener: (event: LocalModelRuntimeEvent) => void): void {
+    this.runtime.setEventListener?.(listener)
+  }
+  async select(modelFile: Blob & { name?: string }, manifestFile: Blob): Promise<LocalModelMetadata> {
+    // A new file invalidates both the old tokenizer and its GPU allocations.
+    try {
+      await this.unload()
+    } finally {
+      this.selected = undefined
+    }
+    const selected = await validateLocalModel(modelFile, manifestFile)
+    this.selected = selected
+    return selected.metadata
+  }
   async load(onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<void> { if (this.selected === undefined) throw new LocalModelError('not_configured', 'Select a GGUF model and manifest first'); await this.runtime.load(this.selected, onProgress, signal); this.runtimeReady = true }
   async unload(): Promise<void> { this.runtimeReady = false; await this.runtime.unload() }
-  async scan(text: string, signal?: AbortSignal): Promise<ScanResult> { if (!this.available() || this.selected === undefined) throw new LocalModelError('not_ready', 'Local model is not ready'); return finalizeScan(text, await this.runtime.scan(text, signal), 'local-model', 'local-model', false, this.selected.metadata.modelId) }
+  async scan(
+    text: string, signal?: AbortSignal, regex: readonly FindingCandidate[] = [],
+  ): Promise<ScanResult> {
+    if (!this.available() || this.selected === undefined) throw new LocalModelError('not_ready', 'Local model is not ready')
+    return mergeLocalModelCandidates(
+      text,
+      await this.runtime.scan(text, signal),
+      this.selected.metadata.modelId,
+      this.selected.metadata.version,
+      regex,
+    )
+  }
 }

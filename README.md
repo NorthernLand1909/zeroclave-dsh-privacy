@@ -246,7 +246,7 @@ pnpm dsh web --no-open
 - ZeroClave 不是 E2EE 通道；网关和 DSH Host 在检测阶段可见原文。
 - 直接 Host API、自动化脚本和 composer 之外的发送路径不在浏览器适配器的完整保护范围内。
 - 本地恢复映射不跨浏览器、设备或 origin 同步。
-- 自定义本地模型当前完成 GGUF/manifest 契约和 Worker 适配层；具体 Qwen WebGPU 推理运行时仍需提供对应适配器。
+- 自定义本地模型使用浏览器 Worker 中的 WebGPU GGUF 运行时。浏览器必须提供 WebGPU；运行时不会回退到 CPU，且受浏览器单个 ArrayBuffer、可用显存和驱动限制。
 - 自定义规则使用 JavaScript 正则语法，当前没有 RE2 导入/导出功能。
 - 浏览器历史、搜索和非 Chat 视图可能只保留 Host 侧的脱敏表示。
 

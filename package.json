@@ -42,6 +42,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.2",
+    "@wllama/wllama": "3.5.1",
     "lucide": "1.8.0"
   },
   "peerDependencies": {

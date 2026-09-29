@@ -34,10 +34,17 @@ const transformersRoot = realpathSync(fileURLToPath(new URL(
   import.meta.url,
 )))
 const transformersWeb = resolve(transformersRoot, 'dist/transformers.web.js')
+const wllamaRoot = realpathSync(fileURLToPath(new URL(
+  './node_modules/@wllama/wllama',
+  import.meta.url,
+)))
+const wllamaWeb = resolve(wllamaRoot, 'esm/index.js')
+const wllamaWasm = resolve(wllamaRoot, 'esm/wasm/wllama.wasm')
 const onnxRuntimeWeb = resolve(transformersRoot, '../../onnxruntime-web/dist/ort.min.mjs')
 const utilCryptoSource = fileURLToPath(new URL('../../util/crypto/src/index.ts', import.meta.url))
 const brandLogoSource = fileURLToPath(new URL('./src/client/assets/zeroclave-logo.png', import.meta.url))
 const BRAND_LOGO_VIRTUAL_ID = '\0zeroclave-brand-logo.mjs'
+const WLLAMA_WASM_VIRTUAL_ID = '\0zeroclave-wllama-wasm.mjs'
 
 export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((config) => {
   if (config.name !== '@zeroclave/dsh-privacy/client') return config
@@ -58,6 +65,19 @@ export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((
         const value = `data:image/png;base64,${readFileSync(brandLogoSource).toString('base64')}`
         return `export default ${JSON.stringify(value)};`
       },
+    }, {
+      name: 'zeroclave-wllama-wasm-inline',
+      resolveId: {
+        order: 'pre' as const,
+        handler(source: string) {
+          return source === 'virtual:zeroclave-wllama-wasm' ? WLLAMA_WASM_VIRTUAL_ID : null
+        },
+      },
+      load(id: string) {
+        if (id !== WLLAMA_WASM_VIRTUAL_ID) return null
+        const value = `data:application/wasm;base64,${readFileSync(wllamaWasm).toString('base64')}`
+        return `export default ${JSON.stringify(value)}`
+      },
     }, ...(config.plugins ?? [])],
     define: {
       ...config.define,
@@ -69,6 +89,7 @@ export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((
         ...config.inputOptions?.resolve,
         alias: {
           '@huggingface/transformers': transformersWeb,
+          '@wllama/wllama/esm/index.js': wllamaWeb,
           '@deepseek-ai/dsh-util-crypto': utilCryptoSource,
           'onnxruntime-web': onnxRuntimeWeb,
         },

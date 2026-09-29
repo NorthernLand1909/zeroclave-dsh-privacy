@@ -110,13 +110,13 @@ function ruleDisplayName(
 function findingSources(result: ScanResult): DetectorMode[] {
   const modes = new Set(result.findings.map(finding => finding.detector))
   if (modes.size === 0) modes.add(result.detector.used)
-  return (['regex', 'embedded', 'zeroclave'] as const).filter(mode => modes.has(mode))
+  return (['regex', 'embedded', 'zeroclave', 'local-model'] as const).filter(mode => modes.has(mode))
 }
 
 function detectorSummary(result: ScanResult, t: PrivacyDrawerProps['t']): string {
   if (result.detector.fallback) return t('source.regexFallback')
   const sources = findingSources(result)
-  if (sources.includes('regex') && sources.includes('embedded')) return t('source.combined')
+  if (sources.includes('regex') && (sources.includes('embedded') || sources.includes('local-model'))) return t('source.combined')
   return t(DETECTOR_KEYS[result.detector.used])
 }
 
@@ -277,7 +277,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
       abort.abort()
     }
   }, [controller, draft, sessionId, snapshot.detectorMode, snapshot.enabled,
-    snapshot.detectorStates.embedded.status, snapshot.regexRevision])
+    snapshot.detectorStates.embedded.status, snapshot.detectorStates['local-model'].status, snapshot.regexRevision])
 
   const incomplete = result.detector.status === 'partial'
   const zeroClaveState = snapshot.detectorStates.zeroclave
@@ -888,8 +888,8 @@ function ModelView({ controller, snapshot, t }: {
               </span>
               <em>
                 {t(statusKey(mode))}
-                {mode === 'embedded' && embeddedState.status === 'loading' && embeddedState.progress !== undefined
-                  ? ` ${Math.round(embeddedState.progress)}%`
+                {snapshot.detectorStates[mode].status === 'loading' && snapshot.detectorStates[mode].progress !== undefined
+                  ? ` ${Math.round(snapshot.detectorStates[mode].progress ?? 0)}%`
                   : ''}
               </em>
             </button>
