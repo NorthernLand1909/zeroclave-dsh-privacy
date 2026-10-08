@@ -804,17 +804,11 @@ function RulesView({ controller, snapshot, t }: {
 }
 
 function LocalModelActions({ controller, snapshot, t, state }: { controller: PrivacyController; snapshot: PrivacySnapshot; t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
-  const [modelFile, setModelFile] = useState<File>()
-  const [manifestFile, setManifestFile] = useState<File>()
-  const choose = (kind: 'model' | 'manifest', file: File | undefined): void => {
-    if (kind === 'model') setModelFile(file)
-    else setManifestFile(file)
-  }
+  const [modelFiles, setModelFiles] = useState<readonly File[]>([])
   return <div className={`${css.modelActions} ${css.localModelActions}`}>
-    <label><span>{t('model.chooseModel')}</span><input type="file" accept=".gguf,application/octet-stream" onChange={event => { choose('model', event.target.files?.[0]) }} /></label>
-    <label><span>{t('model.chooseManifest')}</span><input type="file" accept="application/json,.json" onChange={event => { choose('manifest', event.target.files?.[0]) }} /></label>
-    <button className={css.primaryButton} type="button" disabled={modelFile === undefined || manifestFile === undefined || state.status === 'loading'} onClick={() => { if (modelFile !== undefined && manifestFile !== undefined) void controller.selectLocalModel(modelFile, manifestFile).then(() => controller.loadLocalModel()).catch(() => undefined) }}>
-      {state.status === 'loading' ? t('model.loading') : t('model.loadLocal')}
+    <label><span>{t('model.chooseDirectory')}</span><input type="file" multiple ref={node => { if (node !== null) (node as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true }} onChange={event => { setModelFiles(Array.from(event.target.files ?? [])) }} /></label>
+    <button className={css.primaryButton} type="button" disabled={modelFiles.length === 0 || state.status === 'loading'} onClick={() => { if (modelFiles.length > 0) void controller.selectLocalModelDirectory(modelFiles).then(() => controller.loadLocalModel()).catch(() => undefined) }}>
+      {state.status === 'loading' ? t('model.loading') : t('model.loadLocalDirectory')}
     </button>
     {snapshot.localModel !== undefined ? <small>{`${t('model.localSelected')}: ${snapshot.localModel.modelId} · ${snapshot.localModel.architecture} · ${snapshot.localModel.version} · ${snapshot.localModel.quantization} · ${String(snapshot.localModel.fileSize)} bytes`}</small> : null}
     {state.error !== undefined ? <code>{state.code === undefined ? state.error : `${state.code}: ${state.error}`}</code> : null}

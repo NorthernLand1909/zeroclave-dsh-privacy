@@ -365,6 +365,26 @@ export class PrivacyController {
     }
   }
 
+  async selectLocalModelDirectory(files: readonly (Blob & { name?: string; webkitRelativePath?: string })[]): Promise<LocalModelMetadata> {
+    this.cancelActiveOperations()
+    try {
+      const metadata = await this.localModel.selectDirectory(files)
+      this.update({ ...this.snapshot, localModel: metadata, detectorStates: {
+        ...this.snapshot.detectorStates, 'local-model': { status: 'idle' },
+      } })
+      return metadata
+    } catch (error) {
+      const code = error instanceof LocalModelError ? error.code : 'format_invalid'
+      const { localModel: _localModel, ...withoutModel } = this.snapshot
+      void _localModel
+      this.update({ ...withoutModel, detectorStates: {
+        ...this.snapshot.detectorStates,
+        'local-model': { status: 'error', code, error: error instanceof Error ? error.message : String(error) },
+      } })
+      throw error
+    }
+  }
+
   async loadLocalModel(): Promise<void> {
     this.setDetectorState('local-model', { status: 'loading', progress: 0 })
     try {

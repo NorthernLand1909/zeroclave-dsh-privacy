@@ -46,7 +46,30 @@ const brandLogoSource = fileURLToPath(new URL('./src/client/assets/zeroclave-log
 const BRAND_LOGO_VIRTUAL_ID = '\0zeroclave-brand-logo.mjs'
 const WLLAMA_WASM_VIRTUAL_ID = '\0zeroclave-wllama-wasm.mjs'
 
-export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((config) => {
+const transformersWorker = {
+  name: '@zeroclave/dsh-privacy/transformers-worker',
+  entry: { 'local-model-worker': 'src/local-model-worker.ts' },
+  outDir: 'lib',
+  format: ['esm'] as const,
+  platform: 'browser',
+  target: 'es2024',
+  dts: false,
+  sourcemap: true,
+  clean: false,
+  deps: { alwaysBundle: () => true },
+  inputOptions: {
+    resolve: {
+      alias: {
+        '@huggingface/transformers': transformersWeb,
+        'onnxruntime-web': onnxRuntimeWeb,
+      },
+      conditionNames: ['browser', 'import', 'module', 'default'],
+    },
+  },
+  outputOptions: { entryFileNames: 'local-model-worker.js' },
+}
+
+export default ((options: Parameters<typeof bundle>[0]) => [...bundle(options).map((config) => {
   if (config.name !== '@zeroclave/dsh-privacy/client') return config
   return {
     ...config,
@@ -97,4 +120,4 @@ export default ((options: Parameters<typeof bundle>[0]) => bundle(options).map((
       },
     },
   }
-})) satisfies typeof bundle
+}), transformersWorker]) satisfies typeof bundle

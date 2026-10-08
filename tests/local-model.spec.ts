@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { PrivacyController } from '../src/controller.ts'
 import { mergeLocalModelCandidates, type FindingCandidate } from '../src/detector.ts'
-import { LocalModelDetector, LocalModelError, type ModelManifest, type ModelRuntimeAdapter, type ValidatedLocalModel } from '../src/local-model.ts'
+import { LocalModelDetector, LocalModelError, parseTransformersDirectory, validateTransformersModel, type ModelManifest, type ModelRuntimeAdapter, type ValidatedLocalModel } from '../src/local-model.ts'
 import { buildQwenPrompt, parseModelOutput, type PromptManifestLike } from '../src/local-model-protocol.ts'
 import { PrivacyVault } from '../src/vault.ts'
 import { memoryStore } from './memory-store.ts'
@@ -115,6 +115,41 @@ describe('local-model output protocol', () => {
       entities: [{ type: 'PERSON', start: 0, end: 3, text: 'Bob' }],
     }), 'Alice', ['PERSON'])).toThrow(/does not match/u)
   })
+})
+
+describe('direct Transformers directory import', () => {
+  function directoryFiles(): File[] {
+    const config = new File([JSON.stringify({
+      model_type: 'qwen3_5', architectures: ['Qwen3_5ForConditionalGeneration'], dtype: 'bfloat16',
+      text_config: { vocab_size: 16, hidden_size: 8, num_hidden_layers: 2, max_position_embeddings: 2048 },
+    })], 'config.json')
+    const tokenizer = new File(['{}'], 'tokenizer.json')
+    const tokenizerConfig = new File([JSON.stringify({ chat_template: '{{ system }}{{ user }}' })], 'tokenizer_config.json')
+    const header = new TextEncoder().encode(JSON.stringify({ layer: { dtype: 'F16', shape: [1], data_offsets: [0, 2] } }))
+    const bytes = new Uint8Array(8 + header.length + 2)
+    new DataView(bytes.buffer).setBigUint64(0, BigInt(header.length), true)
+    bytes.set(header, 8)
+    const weights = new File([bytes], 'model.safetensors')
+    for (const [file, path] of [[config, 'Qwen3.5-test/config.json'], [tokenizer, 'Qwen3.5-test/tokenizer.json'], [tokenizerConfig, 'Qwen3.5-test/tokenizer_config.json'], [weights, 'Qwen3.5-test/model.safetensors']] as const) {
+      Object.defineProperty(file, 'webkitRelativePath', { value: path })
+    }
+    return [config, tokenizer, tokenizerConfig, weights]
+  }
+
+  it('validates Qwen3.5 config and reads only selected safetensors files', async () => {
+    const files = directoryFiles()
+    const directory = await parseTransformersDirectory(files)
+    expect(directory.config.modelType).toBe('qwen3_5')
+    expect(directory.weightFiles).toHaveLength(1)
+    const selected = await validateTransformersModel(files)
+    expect(selected.metadata).toMatchObject({ architecture: 'qwen3_5', format: 'transformers', modelId: 'Qwen3.5-test' })
+    expect(selected.file).toBeUndefined()
+    expect(selected.directory?.files.get('Qwen3.5-test/model.safetensors')?.file).toBe(weightsFile(files))
+  })
+
+  function weightsFile(files: readonly File[]): File | undefined {
+    return files.find(file => file.name === 'model.safetensors')
+  }
 })
 
 describe('local-model detector integration', () => {

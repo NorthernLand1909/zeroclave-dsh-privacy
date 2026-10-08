@@ -169,6 +169,7 @@ export class WllamaWebGpuRuntimeAdapter implements ModelRuntimeAdapter {
   }
 
   async load(model: ValidatedLocalModel, onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<void> {
+    if (model.file === undefined || model.manifest.format !== 'gguf') throw new LocalModelError('format_invalid', 'The GGUF runtime requires a GGUF model file')
     await this.unload()
     let runtime: WllamaLike | undefined
     try {
@@ -198,7 +199,7 @@ export class WllamaWebGpuRuntimeAdapter implements ModelRuntimeAdapter {
       runtime.setCompat?.(null)
       if (!runtime.isSupportWebGPU()) throw new LocalModelError('webgpu_unavailable', 'The local runtime cannot use WebGPU in this browser')
       onProgress?.(15)
-      await withDeadline(() => runtime!.loadModel([model.file], {
+      await withDeadline(() => runtime!.loadModel([model.file!], {
         n_ctx: model.manifest.maxContextLength,
         n_batch: Math.min(512, model.manifest.maxContextLength),
         n_gpu_layers: ALL_GPU_LAYERS,
@@ -268,5 +269,84 @@ export class WllamaWebGpuRuntimeAdapter implements ModelRuntimeAdapter {
     } finally {
       this.unloading = false
     }
+  }
+}
+
+interface TransformersWorkerLike {
+  postMessage(message: unknown, transfer?: Transferable[]): void
+  terminate(): void
+  addEventListener(type: 'message' | 'error', listener: (event: MessageEvent | ErrorEvent) => void): void
+  removeEventListener(type: 'message' | 'error', listener: (event: MessageEvent | ErrorEvent) => void): void
+}
+
+export interface TransformersWebGpuRuntimeInternals {
+  navigator?: NavigatorLike
+  createWorker?: () => TransformersWorkerLike
+  workerUrl?: string | URL
+  loadTimeoutMs?: number
+  inferenceTimeoutMs?: number
+}
+
+/**
+ * Browser-only Transformers runtime. The worker receives only File objects selected by the
+ * user in the model directory picker; it never fetches a model path or asks the host backend
+ * for model bytes.
+ */
+export class TransformersWebGpuRuntimeAdapter implements ModelRuntimeAdapter {
+  private worker: TransformersWorkerLike | undefined
+  private listener: ((event: LocalModelRuntimeEvent) => void) | undefined
+  private readonly internals: Required<Pick<TransformersWebGpuRuntimeInternals, 'loadTimeoutMs' | 'inferenceTimeoutMs'>> & TransformersWebGpuRuntimeInternals
+
+  constructor(internals: TransformersWebGpuRuntimeInternals = {}) {
+    this.internals = { ...internals, loadTimeoutMs: internals.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS, inferenceTimeoutMs: internals.inferenceTimeoutMs ?? DEFAULT_INFERENCE_TIMEOUT_MS }
+  }
+
+  setEventListener(listener: (event: LocalModelRuntimeEvent) => void): void { this.listener = listener }
+
+  async load(model: ValidatedLocalModel, onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<void> {
+    void onProgress
+    void signal
+    if (model.directory === undefined || model.manifest.format !== 'transformers') throw new LocalModelError('format_invalid', 'The Transformers runtime requires a model directory')
+    // Transformers.js 3.x loads browser models from an ONNX layout. The directory
+    // validator deliberately understands native Hugging Face safetensors so a future
+    // backend can reuse it, but passing those multi-gigabyte files to this backend only
+    // ends in a timeout after an expensive ArrayBuffer copy. Fail before reading them.
+    throw new LocalModelError(
+      'runtime_unavailable',
+      'This browser runtime cannot execute raw safetensors Qwen3.5 models; a Qwen3.5-capable WebGPU backend is required',
+    )
+  }
+
+  async scan(text: string, signal?: AbortSignal): Promise<readonly FindingCandidate[]> {
+    const worker = this.worker
+    if (worker === undefined) throw new LocalModelError('not_ready', 'Local Transformers model is not ready')
+    try {
+      const value = await this.request(worker, 'scan', { text }, [], undefined, signal, this.internals.inferenceTimeoutMs)
+      if (!Array.isArray(value)) throw new LocalModelError('output_invalid', 'Transformers Worker returned an invalid result')
+      return value as readonly FindingCandidate[]
+    } catch (error) {
+      const resolved = localError(error)
+      if (resolved.code === 'device_lost' || resolved.code === 'out_of_memory' || resolved.code === 'runtime_unavailable') this.listener?.({ code: resolved.code as 'device_lost' | 'out_of_memory' | 'runtime_unavailable', message: resolved.message })
+      throw resolved
+    }
+  }
+
+  async unload(): Promise<void> { const worker = this.worker; this.worker = undefined; worker?.terminate() }
+
+  private request(worker: TransformersWorkerLike, type: string, payload: Record<string, unknown>, transfer: Transferable[], onProgress: ((progress: number) => void) | undefined, signal: AbortSignal | undefined, timeoutMs: number): Promise<unknown> {
+    return withDeadline(() => new Promise((resolve, reject) => {
+      const cleanup = (): void => { worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); signal?.removeEventListener('abort', onAbort) }
+      const onAbort = (): void => { cleanup(); reject(abortError(signal)) }
+      const onError = (event: MessageEvent | ErrorEvent): void => { cleanup(); reject(new LocalModelError('runtime_unavailable', event instanceof ErrorEvent ? event.message : 'Transformers Worker failed')) }
+      const onMessage = (event: MessageEvent | ErrorEvent): void => {
+        const data = 'data' in event ? event.data as { type?: string; progress?: number; result?: unknown; error?: string; code?: string } : undefined
+        if (data?.type === 'progress') { if (typeof data.progress === 'number') onProgress?.(data.progress); return }
+        cleanup()
+        if (data?.type === 'error') reject(new LocalModelError((data.code as LocalModelError['code'] | undefined) ?? 'runtime_unavailable', data.error ?? 'Transformers Worker request failed'))
+        else resolve(data?.result)
+      }
+      worker.addEventListener('message', onMessage); worker.addEventListener('error', onError); signal?.addEventListener('abort', onAbort, { once: true })
+      worker.postMessage({ type, ...payload }, transfer)
+    }), timeoutMs, type === 'load' ? 'load_timeout' : 'inference_timeout', signal)
   }
 }

@@ -136,7 +136,7 @@ export interface LocalModelMetadata {
   modelId: string
   version: string
   architecture: string
-  format: 'gguf'
+  format: 'gguf' | 'transformers'
   fileName: string
   fileSize: number
   fileSha256: string
