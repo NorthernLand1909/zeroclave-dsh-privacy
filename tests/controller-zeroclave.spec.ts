@@ -124,7 +124,7 @@ describe('ZeroClave controller integration', () => {
     expect(write).not.toHaveBeenCalled()
     expect(controller.getSnapshot()).toMatchObject({
       open: true,
-      activeTab: 'model',
+      activeTab: 'audit',
       detectorStates: { zeroclave: { status: 'partial' } },
     })
   })
@@ -200,7 +200,8 @@ describe('ZeroClave controller integration', () => {
 
     const live = controller.getSnapshot().liveBySession.get('session-1')
     expect(live?.text).toBe('Bob')
-    expect(live?.result.redactedText).toBe('__PII_PERSON_00000001__')
+    expect(live?.result.redactedText).toMatch(/^ZCPII-PERSON-[a-f0-9]{32}$/u)
+    expect(live?.result.findings).toMatchObject([{ start: 0, end: 3, entityType: 'PERSON' }])
   })
 
   it('returns a cancelled loading state to idle when the detector mode changes', async () => {

@@ -19,6 +19,21 @@ class Composer {
   }
 }
 
+class SubmissionComposer {
+  async sendSession(
+    session: {
+      sessionId: string
+      beginSubmission: (input: { text: string; mode: string }) => { requestId: string; abandon(): void }
+      prompt: (...args: unknown[]) => Promise<{ ok: boolean }>
+    },
+    text: string, mode: string, signal?: AbortSignal,
+  ) {
+    const submission = session.beginSubmission({ text, mode })
+    const outcome = await session.prompt([{ type: 'text', text }], mode, signal, submission.requestId)
+    return { kind: outcome.ok ? 'success' : 'error' }
+  }
+}
+
 function telemetryReporter(report: TelemetryReporter['report']): TelemetryReporter {
   return {
     consent: true,
@@ -32,6 +47,110 @@ function telemetryReporter(report: TelemetryReporter['report']): TelemetryReport
 }
 
 describe('composer send boundary', () => {
+  it('retires the native optimistic submission when a privacy review is cancelled', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const composer = new SubmissionComposer()
+    installSendRedaction(composer, controller)
+    const abandon = vi.fn()
+    const beginSubmission = vi.fn(() => ({ requestId: 'native-request', abandon }))
+    const prompt = vi.fn(async () => ({ ok: true }))
+    const sending = composer.sendSession({ sessionId: 's1', beginSubmission, prompt }, 'demo@example.com', 'queue')
+    await vi.waitFor(() => { expect(controller.getSnapshot().pendingSendReview).toBeDefined() })
+    expect(beginSubmission).toHaveBeenCalledWith({ text: 'demo@example.com', mode: 'queue' })
+    controller.cancelSendReview()
+    await expect(sending).resolves.toEqual({ kind: 'error' })
+    expect(abandon).toHaveBeenCalledOnce()
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it('retires the native optimistic submission when privacy preparation fails', async () => {
+    const controller = new PrivacyController(new PrivacyVault({
+      ...memoryStore(), write: async () => { throw new Error('quota') },
+    }))
+    controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
+    const composer = new SubmissionComposer()
+    installSendRedaction(composer, controller)
+    const abandon = vi.fn()
+    const beginSubmission = () => ({ requestId: 'native-request', abandon })
+    const prompt = vi.fn(async () => ({ ok: true }))
+    await expect(composer.sendSession({ sessionId: 's1', beginSubmission, prompt }, 'demo@example.com', 'queue')).rejects.toThrow('quota')
+    expect(abandon).toHaveBeenCalledOnce()
+    expect(prompt).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])('leaves native submission retirement to the Host after prompt admission (ok=%s)', async (ok) => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
+    const composer = new SubmissionComposer()
+    installSendRedaction(composer, controller)
+    const abandon = vi.fn()
+    const beginSubmission = () => ({ requestId: 'native-request', abandon })
+    const prompt = vi.fn(async () => ({ ok }))
+    const signal = new AbortController().signal
+    await expect(composer.sendSession({ sessionId: 's1', beginSubmission, prompt }, 'demo@example.com', 'steer', signal))
+      .resolves.toEqual({ kind: ok ? 'success' : 'error' })
+    expect(prompt).toHaveBeenCalledWith([{ type: 'text', text: expect.stringMatching(/^ZCPII-EMAIL-/u) }], 'steer', signal, 'native-request')
+    expect(abandon).not.toHaveBeenCalled()
+  })
+
+  it('honors a side-panel confirmation when the native composer starts asynchronously', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const composer = new Composer()
+    installSendRedaction(composer, controller)
+    const text = 'demo@example.com'
+    await controller.inspect('s1', text)
+    const preview = controller.getSnapshot().liveBySession.get('s1')!.result.redactedText
+    const prompt = vi.fn(async () => ({ ok: true }))
+    let start: (() => void) | undefined
+    let sending: Promise<unknown> | undefined
+    controller.registerComposerSend('s1', { getText: () => text, submit: () => {
+      start = () => { sending = composer.sendSession({ sessionId: 's1', prompt }, text, [], 'queue') }
+    } })
+
+    await controller.requestComposerSend('s1')
+    start?.()
+    await vi.waitFor(() => { expect(prompt).toHaveBeenCalledOnce() })
+    await sending
+    expect((prompt.mock.calls[0]?.[0] as Array<{ text: string }>)[0]?.text).toBe(preview)
+    expect(controller.getSnapshot().pendingSendReview).toBeUndefined()
+  })
+
+  it('keeps failed send decisions available for retry and blocks duplicate sends', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const composer = new Composer()
+    installSendRedaction(composer, controller)
+    let resolve: ((outcome: { ok: boolean }) => void) | undefined
+    const prompt = vi.fn(() => new Promise<{ ok: boolean }>((done) => { resolve = done }))
+    const text = 'demo@example.com'
+    const sending = composer.sendSession({ sessionId: 's1', prompt }, text, [], 'queue')
+    await vi.waitFor(() => { expect(controller.getSnapshot().pendingSendReview).toBeDefined() })
+    const finding = controller.getSnapshot().pendingSendReview!.parts[0]!.result.findings[0]!
+    controller.setSendReviewReplacement(`0:${finding.id}`, '[EMAIL]')
+    controller.confirmSendReview()
+    await vi.waitFor(() => { expect(prompt).toHaveBeenCalledOnce() })
+    expect(controller.getSnapshot().pendingSendReview?.status).toBe('sending')
+    await expect(composer.sendSession({ sessionId: 's1', prompt }, text, [], 'queue')).resolves.toEqual({ kind: 'error' })
+    expect(prompt).toHaveBeenCalledOnce()
+    resolve?.({ ok: false })
+    await sending
+    expect(controller.getSnapshot().pendingSendReview?.status).toBe('error')
+    expect(controller.getSnapshot().pendingSendReview?.parts[0]?.result.redactedText).toBe('[EMAIL]')
+
+    prompt.mockImplementation(async () => ({ ok: true }))
+    controller.registerComposerSend('s1', { getText: () => text, submit: async () => {
+      await composer.sendSession({ sessionId: 's1', prompt }, text, [], 'queue')
+    } })
+    await controller.requestComposerSend('s1')
+    expect(prompt).toHaveBeenCalledTimes(2)
+    expect((prompt.mock.calls[1]?.[0] as Array<{ text: string }>)[0]?.text).toBe('[EMAIL]')
+    expect(controller.getSnapshot().pendingSendReview).toBeUndefined()
+  })
+
   it('records a protected zero-finding send only after success and never awaits telemetry delivery', async () => {
     const pendingDelivery = new Promise<void>(() => undefined)
     const successfulReport = vi.fn(() => { void pendingDelivery })
@@ -135,6 +254,7 @@ describe('composer send boundary', () => {
     controller.setEnabled(true)
     const composer = new Composer()
     installSendRedaction(composer, controller)
+    controller.registerComposerSend('s1', { getText: () => '', submit: () => undefined })
     const prompt = vi.fn(async () => ({ ok: true }))
     const secret = 'abcdefghijklmnopqrstuvwx'
     const text = `api_key=${secret}\nemail=demo@example.com`
@@ -187,6 +307,25 @@ describe('composer send boundary', () => {
     await sending
     const outgoing = (prompt.mock.calls[0]?.[0] as Array<{ text: string }>)[0]?.text ?? ''
     expect(outgoing).toBe('email=[TEAM_EMAIL]')
+    expect(outgoing).not.toContain('demo@example.com')
+  })
+
+  it('protects an entity added while manual confirmation is open', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const composer = new Composer()
+    installSendRedaction(composer, controller)
+    const prompt = vi.fn(async () => ({ ok: true }))
+    const sending = composer.sendSession({ sessionId: 's1', prompt }, 'hello demo@example.com', [], 'queue')
+    await vi.waitFor(() => { expect(controller.getSnapshot().pendingSendReview).toBeDefined() })
+
+    expect(controller.addLiveFinding('s1', 'hello', '[GREETING]', 'greeting')).toBe(true)
+    controller.confirmSendReview()
+    await sending
+
+    const outgoing = (prompt.mock.calls[0]?.[0] as Array<{ text: string }>)[0]?.text ?? ''
+    expect(outgoing).toContain('[GREETING]')
+    expect(outgoing).not.toContain('hello')
     expect(outgoing).not.toContain('demo@example.com')
   })
 

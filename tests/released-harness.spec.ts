@@ -45,6 +45,7 @@ describe('released Harness 0.1.1-rc.2', () => {
     await service.await()
     const controller = new PrivacyController(new PrivacyVault(memoryStore()))
     controller.setEnabled(true)
+    controller.setSendPolicy('auto-redact')
     const conversation = ctx.get('conversation') as {
       sendSession(session: object, text: string, images: unknown[], mode: string): Promise<{ kind: string }>
     }

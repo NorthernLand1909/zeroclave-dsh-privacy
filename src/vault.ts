@@ -57,6 +57,7 @@ export class PrivacyVault {
   private readonly sessions = new Map<string, Map<string, Mapping>>()
   private readonly loads = new Map<string, Promise<void>>()
   private readonly operations = new Map<string, Promise<unknown>>()
+  private readonly reservations = new Map<string, Map<string, Mapping>>()
 
   constructor(private readonly store: MappingStore = new BrowserMappingStore()) {}
 
@@ -69,6 +70,33 @@ export class PrivacyVault {
       this.loads.set(sessionId, pending)
     }
     await pending
+  }
+
+  /** Reserve preview tokens in memory; unsent originals are never written to IndexedDB. */
+  async preview(sessionId: string, text: string, result: ScanResult): Promise<ScanResult> {
+    await this.load(sessionId)
+    const mappings = this.sessions.get(sessionId)
+    if (mappings === undefined) throw new Error('Privacy mappings were disposed')
+    let reserved = this.reservations.get(sessionId)
+    if (reserved === undefined) { reserved = new Map(); this.reservations.set(sessionId, reserved) }
+    const values = new Map([...mappings.values()].map(mapping => [`${mapping.entityType}\u0000${mapping.original}`, mapping]))
+    const findings = result.findings.map(finding => {
+      if (finding.sendReplacement !== undefined) return finding
+      const original = text.slice(finding.start, finding.end)
+      const key = `${finding.entityType}\u0000${original}`
+      let mapping = values.get(key) ?? reserved.get(key)
+      if (mapping === undefined) {
+        mapping = { sessionId, original, entityType: finding.entityType,
+          token: `ZCPII-${finding.entityType}-${randomUUID().replaceAll('-', '')}` }
+        reserved.set(key, mapping)
+      }
+      return { ...finding, replacement: mapping.token }
+    })
+    const redactedText = [...findings].filter(finding => finding.action !== 'kept')
+      .sort((left, right) => right.start - left.start).reduce((value, finding) => (
+        value.slice(0, finding.start) + finding.replacement + value.slice(finding.end)
+      ), text)
+    return { ...result, findings, redactedText }
   }
 
   async redact(sessionId: string, text: string, result: ScanResult): Promise<ScanResult> {
@@ -87,7 +115,7 @@ export class PrivacyVault {
         const key = `${finding.entityType}\u0000${original}`
         let mapping = values.get(key)
         if (mapping === undefined) {
-          mapping = {
+          mapping = this.reservations.get(sessionId)?.get(key) ?? {
             sessionId, original, entityType: finding.entityType,
             token: `ZCPII-${finding.entityType}-${randomUUID().replaceAll('-', '')}`,
           }
@@ -124,5 +152,6 @@ export class PrivacyVault {
     await Promise.allSettled([...this.loads.values(), ...this.operations.values()])
     this.store.close()
     this.sessions.clear()
+    this.reservations.clear()
   }
 }

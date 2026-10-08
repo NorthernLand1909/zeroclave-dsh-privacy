@@ -15,7 +15,7 @@ export type PrivacyKey =
   | 'audit.method' | 'audit.findingsUnit' | 'audit.completed' | 'audit.checking' | 'audit.rechecking' | 'audit.recheck'
   | 'audit.partialStatus'
   | 'audit.copyOriginal' | 'audit.copyRedacted'
-  | 'audit.findings' | 'audit.empty' | 'audit.noFindings' | 'audit.json' | 'audit.copyJson'
+  | 'audit.findings' | 'audit.empty' | 'audit.paused' | 'audit.noFindings' | 'audit.json' | 'audit.copyJson'
   | 'audit.policy' | 'audit.fallback' | 'audit.partial' | 'audit.partialNoFindings'
   | 'audit.gatewayFinding' | 'audit.modelFinding'
   | 'source.regex' | 'source.embedded' | 'source.zeroclave' | 'source.regexFallback' | 'source.combined'
@@ -59,9 +59,36 @@ export type PrivacyKey =
   | 'review.confirm' | 'review.confirmKeep' | 'review.items' | 'review.keptWarning'
   | 'audit.deterministic'
   | 'footer.core' | 'footer.configure'
+  | 'flow.ready' | 'flow.checking' | 'flow.failed' | 'flow.failedHint' | 'flow.useRegex'
+  | 'flow.bertUnavailable' | 'flow.bertLoading' | 'flow.sending' | 'flow.sendFailed'
+  | 'flow.retrySend' | 'flow.unsaved' | 'flow.kept' | 'flow.restore' | 'flow.keepAll'
+  | 'flow.occurrences' | 'flow.editAll' | 'flow.addAll' | 'flow.allKept'
+  | 'flow.telemetryOn' | 'flow.textOnly' | 'flow.completed' | 'flow.requestFailed'
 
 export const zh: Record<PrivacyKey, string> = {
   ...rulesZh,
+  'flow.ready': '检测完成，请确认发送内容',
+  'flow.checking': '正在检测，请稍候',
+  'flow.failed': '检测未成功',
+  'flow.failedHint': '当前内容尚未通过检测，暂时无法发送。可以重试或选择本地正则重新检测。',
+  'flow.useRegex': '改用本地正则',
+  'flow.bertUnavailable': 'BERT 模型尚不可用，请加载模型，或改用本地正则。',
+  'flow.bertLoading': '正在加载 BERT 模型，完成后将重新检测。',
+  'flow.sending': '正在发送…',
+  'flow.sendFailed': '发送未完成，输入和修改已保留',
+  'flow.retrySend': '重试发送',
+  'flow.unsaved': '请先保存或取消正在编辑的内容',
+  'flow.kept': '保留原文',
+  'flow.restore': '恢复保护',
+  'flow.keepAll': '全部保留原文',
+  'flow.occurrences': '{count} 处',
+  'flow.editAll': '应用到全部相同内容',
+  'flow.addAll': '保护输入中全部相同内容',
+  'flow.allKept': '当前所有命中项均已选择保留原文',
+  'flow.telemetryOn': '已开启',
+  'flow.textOnly': '仅检测消息文本，图片和文件附件不在检测范围内。',
+  'flow.completed': '发送成功',
+  'flow.requestFailed': '未能启动发送，请返回输入框重试。',
   brand: 'ZeroClave 隐私防火墙',
   active: '已开启',
   paused: '已关闭',
@@ -107,6 +134,7 @@ export const zh: Record<PrivacyKey, string> = {
   'audit.copyRedacted': '复制脱敏文本',
   'audit.findings': '敏感实体',
   'audit.empty': '输入内容后，这里会显示检测结果',
+  'audit.paused': '隐私检测已暂停，请开启后重新检测当前输入。',
   'audit.noFindings': '当前草稿未检出敏感实体',
   'audit.json': '检测结果 JSON',
   'audit.copyJson': '复制 JSON',
@@ -259,6 +287,28 @@ export const zh: Record<PrivacyKey, string> = {
 
 export const en: Record<PrivacyKey, string> = {
   ...rulesEn,
+  'flow.ready': 'Detection complete. Review the message before sending.',
+  'flow.checking': 'Checking, please wait',
+  'flow.failed': 'Detection did not succeed',
+  'flow.failedHint': 'Sending is blocked until detection succeeds. Retry or switch to local regex and check again.',
+  'flow.useRegex': 'Use local regex',
+  'flow.bertUnavailable': 'BERT is not available. Load the model or switch to local regex.',
+  'flow.bertLoading': 'Loading BERT. Detection will resume when the model is ready.',
+  'flow.sending': 'Sending…',
+  'flow.sendFailed': 'Sending did not complete. Your input and edits are preserved.',
+  'flow.retrySend': 'Retry sending',
+  'flow.unsaved': 'Save or cancel your current edit before sending',
+  'flow.kept': 'Kept as original',
+  'flow.restore': 'Restore protection',
+  'flow.keepAll': 'Keep all as original',
+  'flow.occurrences': '{count} occurrences',
+  'flow.editAll': 'Apply to all identical content',
+  'flow.addAll': 'Protect all identical content in the input',
+  'flow.allKept': 'All detected items will be kept as original',
+  'flow.telemetryOn': 'On',
+  'flow.textOnly': 'Only message text is checked. Images and file attachments are not checked.',
+  'flow.completed': 'Sent successfully',
+  'flow.requestFailed': 'Could not start sending. Return to the composer and retry.',
   brand: 'ZeroClave Privacy Firewall',
   active: 'On',
   paused: 'Off',
@@ -304,6 +354,7 @@ export const en: Record<PrivacyKey, string> = {
   'audit.copyRedacted': 'Copy redacted text',
   'audit.findings': 'Sensitive entities',
   'audit.empty': 'Enter text to see its detection result here',
+  'audit.paused': 'Privacy detection is paused. Turn it on to scan the current input again.',
   'audit.noFindings': 'No sensitive entity was found in the current draft',
   'audit.json': 'Detection result JSON',
   'audit.copyJson': 'Copy JSON',

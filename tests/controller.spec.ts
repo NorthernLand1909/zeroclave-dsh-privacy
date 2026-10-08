@@ -45,7 +45,7 @@ describe('controller telemetry boundaries', () => {
       new PrivacyVault(memoryStore()), async () => [], undefined, reporter,
     )
     controller.setEnabled(true)
-    controller.setDetectorMode('embedded')
+    controller.setDetectorMode('regex')
 
     await controller.inspect('session-1', 'plain text')
 
@@ -75,5 +75,45 @@ describe('controller telemetry boundaries', () => {
     await controller.inspect('session-1', 'plain text')
 
     expect(report).not.toHaveBeenCalled()
+  })
+
+  it('blocks an unavailable BERT model until the user explicitly selects another detector', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    controller.setDetectorMode('embedded')
+    await controller.inspect('session-1', 'demo@example.com')
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.phase).toBe('error')
+    await expect(controller.prepareSend('session-1', 'demo@example.com')).rejects.toThrow('explicitly select local regex')
+    expect(new PrivacyController(new PrivacyVault(memoryStore())).getSnapshot().detectorMode).toBe('embedded')
+  })
+
+  it('retains decisions on recheck of the same draft and discards them for a different draft', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+    const text = 'hello demo@example.com'
+    await controller.inspect('session-1', text)
+    const finding = controller.getSnapshot().liveBySession.get('session-1')!.result.findings[0]!
+    controller.setLiveFindingProtection('session-1', finding.id, false)
+    expect(controller.addLiveFinding('session-1', 'hello', '[GREETING]', 'greeting')).toBe(true)
+    await controller.inspect('session-1', text)
+    expect(controller.getSnapshot().liveBySession.get('session-1')?.result.redactedText).toBe('[GREETING] demo@example.com')
+    await controller.inspect('session-1', 'hello other@example.com')
+    const updated = controller.getSnapshot().liveBySession.get('session-1')!.result
+    expect(updated.findings).toHaveLength(1)
+    expect(updated.findings[0]?.action).not.toBe('kept')
+    expect(updated.redactedText).not.toContain('other@example.com')
+  })
+
+  it('cancels a pending send review when the active session changes', async () => {
+    const controller = new PrivacyController(new PrivacyVault(memoryStore()))
+    controller.setEnabled(true)
+
+    const preparing = controller.prepareSendBatch('session-1', ['demo@example.com'])
+    await vi.waitFor(() => { expect(controller.getSnapshot().pendingSendReview).toBeDefined() })
+
+    controller.setActiveSession('session-2')
+
+    expect(controller.getSnapshot().pendingSendReview).toBeUndefined()
+    await expect(preparing).rejects.toThrow('cancelled')
   })
 })

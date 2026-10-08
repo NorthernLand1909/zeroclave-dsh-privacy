@@ -4,7 +4,7 @@ ZeroClave Privacy Firewall 是面向 DeepSeek Harness 的隐私检测和脱敏�
 
 在消息发送给大模型之前，插件会检测敏感实体，展示原文和脱敏结果，并允许用户决定哪些内容可以发送。
 
-版本：0.1.0-alpha.25
+版本：0.1.0-alpha.27
 
 平台：DeepSeek Harness Web，以及 Desktop 内嵌的 Web Surface。
 
@@ -73,9 +73,11 @@ https://deepseek.stream/upload
 
 本地 DSH：
 
+桌面版打开“插件 → 添加插件”，在“包名或地址”中填入 TGZ 文件的绝对路径。安装完成后点击“立即启用”。已有旧版时，先卸载再安装新版。
+
 在匹配的 Harness workspace 中使用 TGZ 包：
 
-`pnpm dsh plugin --profile web add ./zeroclave-dsh-privacy-0.1.0-alpha.25.tgz`
+`pnpm dsh plugin --profile web add ./zeroclave-dsh-privacy-0.1.0-alpha.27.tgz`
 
 然后启动 Web profile：
 
@@ -83,7 +85,7 @@ https://deepseek.stream/upload
 
 ## 兼容性
 
-- DeepSeek Harness 0.1.3 或更高版本。
+- DeepSeek Harness 0.1.3-alpha.1 和 0.2.0-rc.2。
 - DeepSeek Harness Web。
 - Desktop 内嵌的 DSH Web Surface。
 - Apache-2.0 License。

@@ -15,6 +15,7 @@ import type {
 import { DEFAULT_REGEX_RULES } from '../detector.ts'
 import { RULE_ENTITY_TYPES } from '../regex-rules.ts'
 import type { PrivacyKey } from './locales.ts'
+import { selectedSessionId } from './session-selection.ts'
 import css from './PrivacySurfaces.module.css'
 import zeroclaveLogo from './assets/zeroclave-logo.png'
 
@@ -27,15 +28,7 @@ export type FooterButtonProps =
 export type PrivacyDockProps =
   PropsRuntime<'conversation.input.dock'> & PropsLocale<'zeroclave.privacy'> & ControllerProps
 export type PrivacyDrawerProps =
-  PropsRuntime<'shell.overlay'> & PropsLocale<'zeroclave.privacy'> & ControllerProps & DrawerInjectedProps
-
-interface DrawerInjectedProps {
-  sessions: {
-    binding(sessionId: string): { session: object } | undefined
-    scope(sessionId: string): object | undefined
-  }
-  conversation: object
-}
+  PropsRuntime<'shell.overlay'> & PropsLocale<'zeroclave.privacy'> & ControllerProps
 
 const ENTITY_KEYS: Record<PrivacyFinding['entityType'], PrivacyKey> = {
   AGE: 'entity.AGE',
@@ -224,9 +217,10 @@ export function HeaderButton({ controller, t }: HeaderButtonProps): ReactNode {
     <button
       className={css.headerButton}
       data-open={snapshot.open || undefined}
+      data-enabled={snapshot.enabled || undefined}
       type="button"
       aria-pressed={snapshot.open}
-      onClick={() => { controller.toggleOpen() }}
+      onClick={() => { controller.setTab('audit'); controller.setOpen(true) }}
     >
       <ShieldIcon size={14} />
       <span>{t('headerAction')}</span>
@@ -244,7 +238,7 @@ export function FooterButton({ controller, wide, t }: FooterButtonProps): ReactN
       data-enabled={snapshot.enabled || undefined}
       type="button"
       aria-label={t('brand')}
-      onClick={() => { controller.toggleOpen() }}
+      onClick={() => { controller.setTab('audit'); controller.setOpen(true) }}
     >
       <ShieldIcon size={16} />
       {wide ? <span>{t('brand')}</span> : null}
@@ -253,18 +247,28 @@ export function FooterButton({ controller, wide, t }: FooterButtonProps): ReactN
   )
 }
 
-export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockProps): ReactNode {
+export function PrivacyDock({ controller, sessionId, t, useInput, inputActions }: PrivacyDockProps): ReactNode {
   const snapshot = usePrivacy(controller)
-  const draft = useInput(state => state.draft)
+  // Harness trims the serialized message before its send boundary.
+  const draft = useInput(state => state.draft).trim()
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  useEffect(() => controller.registerComposerSend(sessionId, {
+    getText: () => draftRef.current,
+    submit: () => { inputActions.submit() },
+  }), [controller, sessionId, inputActions])
   const baseline = useMemo(
     () => controller.scan(draft),
     [controller, draft, snapshot.detectorMode, snapshot.enabled, snapshot.regexRevision],
   )
   const live = snapshot.liveBySession.get(sessionId)
   const result = live?.text === draft ? live.result : baseline
+  const sendBusy = snapshot.sendState?.sessionId === sessionId
+    && (snapshot.sendState.status === 'preparing' || snapshot.sendState.status === 'sending')
 
   useEffect(() => {
     controller.setActiveSession(sessionId)
+    if (sendBusy) return
     const abort = new AbortController()
     const delay = snapshot.detectorMode === 'zeroclave'
       ? 650
@@ -277,23 +281,23 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
       abort.abort()
     }
   }, [controller, draft, sessionId, snapshot.detectorMode, snapshot.enabled,
-    snapshot.detectorStates.embedded.status, snapshot.regexRevision])
+    snapshot.detectorStates.embedded.status, snapshot.regexRevision, sendBusy])
 
   const incomplete = result.detector.status === 'partial'
-  const zeroClaveState = snapshot.detectorStates.zeroclave
-  const remotePhase = snapshot.detectorMode === 'zeroclave'
-    && (zeroClaveState.status === 'loading' || zeroClaveState.status === 'error')
-    ? zeroClaveState.status : undefined
-  if (!snapshot.enabled || (
+  const detectorState = snapshot.detectorStates[snapshot.detectorMode]
+  const remotePhase = live?.text === draft && live.phase === 'error' ? 'error'
+    : live?.text === draft && live.phase === 'checking' ? 'loading'
+      : detectorState.status === 'loading' || detectorState.status === 'error' ? detectorState.status : undefined
+  if (!snapshot.enabled || draft === '' || (
     result.findings.length === 0 && result.policySignals.length === 0 && !incomplete && remotePhase === undefined
   )) return null
 
   const count = result.findings.length + result.policySignals.length
-  const title = remotePhase === 'loading' ? t('dock.checking')
-    : remotePhase === 'error' ? t('dock.error')
+  const title = remotePhase === 'loading' ? t('flow.checking')
+    : remotePhase === 'error' ? t('flow.failed')
       : t(incomplete ? 'dock.partial' : 'dock.title')
   const detail = remotePhase === 'loading' ? t('dock.checkingReminder')
-    : remotePhase === 'error' ? t('dock.errorReminder')
+    : remotePhase === 'error' ? t(snapshot.detectorMode === 'embedded' ? 'flow.bertUnavailable' : 'dock.errorReminder')
       : incomplete ? t('dock.partialReminder')
         : `${String(count)} ${t('dock.items')} · ${t(
           snapshot.sendPolicy === 'review-manual' ? 'dock.reviewReminder' : 'dock.reminder',
@@ -313,7 +317,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput }: PrivacyDockP
           className={css.secondaryButton}
           type="button"
           onClick={() => {
-            if (remotePhase !== undefined) controller.setTab('model')
+            controller.setTab('audit')
             controller.setOpen(true)
           }}
         >
@@ -351,253 +355,279 @@ function normalized(result: ScanResult): object {
   }
 }
 
-function AuditFindings({ controller, live, sessionId, incomplete, t }: {
+function AuditFindings({ controller, live, sessionId, incomplete, disabled, onEditingChange, t }: {
   controller: PrivacyController
-  live: NonNullable<ReturnType<PrivacySnapshot['liveBySession']['get']>>
+  live: PrivacyLiveState
   sessionId: string | undefined
   incomplete: boolean
+  disabled: boolean
+  onEditingChange: (editing: boolean) => void
   t: PrivacyDrawerProps['t']
 }): ReactNode {
   const [editingFindingId, setEditingFindingId] = useState<string>()
   const [editValue, setEditValue] = useState('')
-  const [unprotectFinding, setUnprotectFinding] = useState<{ id: string; original: string; replacement: string }>()
-  const [undoFinding, setUndoFinding] = useState<{ id: string; original: string; replacement: string }>()
-  const [cancelledIds, setCancelledIds] = useState<ReadonlySet<string>>(new Set())
+  const [editAll, setEditAll] = useState(false)
+  const [undoFinding, setUndoFinding] = useState<{ ids: string[]; original: string }>()
   const [addingEntity, setAddingEntity] = useState(false)
   const [addType, setAddType] = useState('')
   const [addOriginal, setAddOriginal] = useState('')
   const [addReplacement, setAddReplacement] = useState('')
+  const [addAll, setAddAll] = useState(true)
   const [addError, setAddError] = useState(false)
   const [expandedValue, setExpandedValue] = useState<{ label: string; value: string }>()
+
   useEffect(() => {
-    if (unprotectFinding === undefined || sessionId === undefined) return
-    if (window.confirm(t('review.unprotectMessage'))) {
-      controller.setLiveFindingProtection(sessionId, unprotectFinding.id, false, unprotectFinding.original)
-      setUndoFinding({ id: unprotectFinding.id, original: unprotectFinding.original, replacement: unprotectFinding.replacement })
-      setCancelledIds(current => new Set(current).add(unprotectFinding.id))
-    }
-    setUnprotectFinding(undefined)
-  }, [controller, sessionId, t, unprotectFinding])
+    onEditingChange(editingFindingId !== undefined || addingEntity)
+    return () => { onEditingChange(false) }
+  }, [onEditingChange, editingFindingId, addingEntity])
+
+  const kept = live.result.findings.filter(finding => finding.action === 'kept')
+  const visible = live.result.findings.filter(finding => finding.action !== 'kept')
+  const groups = new Map<string, PrivacyFinding[]>()
+  for (const finding of visible) {
+    const groupKey = JSON.stringify([finding.entityType, finding.sourceType, live.text.slice(finding.start, finding.end)])
+    const group = groups.get(groupKey) ?? []
+    group.push(finding)
+    groups.set(groupKey, group)
+  }
+  const keep = (findings: PrivacyFinding[]): void => {
+    if (sessionId === undefined || disabled) return
+    if (!window.confirm(t('review.unprotectMessage'))) return
+    const ids = findings.map(finding => finding.id)
+    controller.setLiveFindingsProtection(sessionId, ids, false)
+    const first = findings[0]
+    setUndoFinding({ ids, original: first === undefined ? '' : live.text.slice(first.start, first.end) })
+  }
+  const row = (finding: PrivacyFinding, group: PrivacyFinding[]): ReactNode => {
+    const original = live.text.slice(finding.start, finding.end)
+    return (
+      <div className={css.findingRow} key={finding.id}>
+        <div>
+          <strong>{findingTypeLabel(finding, t)}</strong>
+          <small>{t(CATEGORY_KEYS[finding.category])}</small>
+        </div>
+        {editingFindingId === finding.id ? (
+          <div className={css.findingEdit}>
+            <input aria-label={t('review.editLabel')} value={editValue} autoFocus disabled={disabled}
+              onChange={event => { setEditValue(event.target.value) }} />
+            {group.length > 1 ? <label className={css.scopeChoice}>
+              <input type="checkbox" checked={editAll} disabled={disabled}
+                onChange={event => { setEditAll(event.target.checked) }} />{t('flow.editAll')}
+            </label> : null}
+            <div className={css.reviewEditActions}>
+              <button type="button" disabled={disabled || editValue.trim() === ''} onClick={() => {
+                if (sessionId !== undefined) controller.setLiveFindingsReplacement(
+                  sessionId, editAll ? group.map(item => item.id) : [finding.id], editValue,
+                )
+                setEditingFindingId(undefined)
+              }}>{t('review.saveEdit')}</button>
+              <button type="button" onClick={() => { setEditingFindingId(undefined) }}>{t('review.cancelEdit')}</button>
+            </div>
+          </div>
+        ) : (
+          <div className={css.findingTransform}>
+            <button className={css.entityValueButton} type="button" title={t('review.openValue')}
+              onClick={() => { setExpandedValue({ label: findingTypeLabel(finding, t), value: original }) }}>
+              {original}
+            </button>
+            <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+            <button className={`${css.entityValueButton} ${css.entityValueReplacement}`} type="button"
+              title={t('review.openValue')} onClick={() => {
+                setExpandedValue({ label: t('review.redactedOutput'), value: finding.replacement })
+              }}>{finding.replacement}</button>
+          </div>
+        )}
+        <div className={css.findingMeta}>
+          <button className={css.reviewIconButton} type="button" title={t('review.edit')} aria-label={t('review.edit')}
+            disabled={disabled || sessionId === undefined || addingEntity} onClick={() => {
+              setEditingFindingId(finding.id); setEditValue(finding.replacement); setEditAll(false)
+            }}><LucideIcon icon={Pencil} size={16} /></button>
+          <button className={css.reviewIconButton} type="button" title={t('review.keep')} aria-label={t('review.keep')}
+            disabled={disabled || sessionId === undefined || editingFindingId !== undefined || addingEntity}
+            onClick={() => { keep([finding]) }}><LucideIcon icon={X} size={17} /></button>
+        </div>
+      </div>
+    )
+  }
   return (
     <section className={css.findingsSection}>
       <div className={css.sectionHeading}>
-        <strong>{`${t('audit.findings')} (${String(live.result.findings.length - cancelledIds.size)})`}</strong>
-        <button className={css.reviewAddButton} type="button" title={t('review.addEntity')}
-          aria-label={t('review.addEntity')} onClick={() => { setAddingEntity(true); setAddError(false) }}>
-          <LucideIcon icon={Plus} size={18} />
-        </button>
+        <strong>{`${t('audit.findings')} (${String(visible.length)})`}</strong>
+        <button className={css.reviewAddButton} type="button" title={t('review.addEntity')} aria-label={t('review.addEntity')}
+          disabled={disabled || editingFindingId !== undefined || addingEntity}
+          onClick={() => { setAddingEntity(true); setAddError(false) }}><LucideIcon icon={Plus} size={18} /></button>
       </div>
-      {live.result.findings.length === cancelledIds.size ? (
-        <p className={incomplete ? css.incompleteFindings : css.noFindings}>
-          {incomplete ? t('audit.partialNoFindings') : `✓ ${t('audit.noFindings')}`}
-        </p>
-      ) : (
-        <div className={css.findingRows}>
-          {live.result.findings.filter(finding => !cancelledIds.has(finding.id)).map(finding => {
-            const original = live.text.slice(finding.start, finding.end)
-            const editing = editingFindingId === finding.id
-            return (
-                <div className={css.findingRow} data-cancelled={cancelledIds.has(finding.id) || undefined} key={finding.id}>
-                <div>
-                  <strong>{findingTypeLabel(finding, t)}</strong>
-                  <small>{t(CATEGORY_KEYS[finding.category])}</small>
-                </div>
-                {editing ? (
-                  <div className={css.findingEdit}>
-                    <input
-                      aria-label={`${t('review.editLabel')}: ${findingTypeLabel(finding, t)}`}
-                      value={editValue}
-                      onChange={event => { setEditValue(event.target.value) }}
-                      autoFocus
-                    />
-                    <div className={css.reviewEditActions}>
-                      <button type="button" onClick={() => {
-                        if (sessionId !== undefined) controller.setLiveFindingReplacement(sessionId, finding.id, editValue)
-                        setEditingFindingId(undefined)
-                      }}>{t('review.saveEdit')}</button>
-                      <button type="button" onClick={() => { setEditingFindingId(undefined) }}>{t('review.cancelEdit')}</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className={css.findingTransform}>
-                    <button className={css.entityValueButton} type="button" title={t('review.openValue')}
-                      onClick={() => { setExpandedValue({ label: findingTypeLabel(finding, t), value: original || finding.maskedEvidence }) }}>
-                      {original || finding.maskedEvidence}
-                    </button>
-                    <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
-                    <button className={`${css.entityValueButton} ${css.entityValueReplacement}`} type="button"
-                      title={t('review.openValue')} onClick={() => { setExpandedValue({ label: t('review.redactedOutput'), value: finding.replacement || '—' }) }}>
-                      {finding.replacement || '—'}
-                    </button>
-                  </div>
-                )}
-                <div className={css.findingMeta}>
-                  <button className={css.reviewIconButton} type="button" title={t('review.edit')}
-                    aria-label={t('review.edit')} disabled={sessionId === undefined}
-                    onClick={() => {
-                      setEditingFindingId(finding.id)
-                      setEditValue(finding.replacement)
-                    }}><LucideIcon icon={Pencil} size={16} /></button>
-                    <button className={css.reviewIconButton} type="button" title={t('review.keep')}
-                      aria-label={t('review.keep')} disabled={sessionId === undefined}
-                      onClick={() => {
-                        if (sessionId !== undefined) setUnprotectFinding({
-                          id: finding.id, original, replacement: finding.replacement,
-                        })
-                      }}><LucideIcon icon={X} size={17} /></button>
-                </div>
-              </div>
-            )
-          })}
+      {visible.length === 0 ? <p className={incomplete ? css.incompleteFindings : css.noFindings}>
+        {incomplete ? t('audit.partialNoFindings') : kept.length > 0 ? t('flow.allKept') : t('audit.noFindings')}
+      </p> : <div className={css.findingRows}>
+        {[...groups.entries()].map(([groupKey, group]) => {
+          const first = group[0]
+          if (first === undefined) return null
+          if (group.length === 1) return row(first, group)
+          return <details className={css.findingGroup} key={groupKey}>
+            <summary><strong>{findingTypeLabel(first, t)}</strong>
+              <code>{live.text.slice(first.start, first.end)}</code>
+              <span>{t('flow.occurrences').replace('{count}', String(group.length))}</span>
+            </summary>
+            <div className={css.groupActions}>
+              <button className={css.textButton} type="button" disabled={disabled || editingFindingId !== undefined || addingEntity}
+                onClick={() => { keep(group) }}>{t('flow.keepAll')}</button>
+            </div>
+            {group.map(finding => <div className={css.findingOccurrence} key={finding.id}>
+              <p>{live.text.slice(Math.max(0, finding.start - 18), Math.min(live.text.length, finding.end + 18))}</p>
+              {row(finding, group)}
+            </div>)}
+          </details>
+        })}
+      </div>}
+      {addingEntity ? <div className={css.reviewAddForm}>
+        <strong>{t('review.addTitle')}</strong>
+        <input aria-label={t('review.entityTypePlaceholder')} value={addType} placeholder={t('review.entityTypePlaceholder')}
+          maxLength={40} disabled={disabled} onChange={event => { setAddType(event.target.value); setAddError(false) }} />
+        <div className={css.reviewAddValues}>
+          <input aria-label={t('review.originalPlaceholder')} value={addOriginal} placeholder={t('review.originalPlaceholder')}
+            disabled={disabled} onChange={event => { setAddOriginal(event.target.value); setAddError(false) }} />
+          <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
+          <input aria-label={t('review.replacementPlaceholder')} value={addReplacement} placeholder={t('review.replacementPlaceholder')}
+            disabled={disabled} onChange={event => { setAddReplacement(event.target.value); setAddError(false) }} />
         </div>
-      )}
-      {addingEntity ? (
-        <div className={css.reviewAddForm}>
-          <strong>{t('review.addTitle')}</strong>
-          <input value={addType} placeholder={t('review.entityTypePlaceholder')} maxLength={40}
-            onChange={event => { setAddType(event.target.value); setAddError(false) }} />
-          <div className={css.reviewAddValues}>
-            <input value={addOriginal} placeholder={t('review.originalPlaceholder')}
-              onChange={event => { setAddOriginal(event.target.value); setAddError(false) }} />
-            <span className={css.reviewArrow}><LucideIcon icon={ArrowRight} size={17} /></span>
-            <input value={addReplacement} placeholder={t('review.replacementPlaceholder')}
-              onChange={event => { setAddReplacement(event.target.value); setAddError(false) }} />
-          </div>
-          {addError ? <small className={css.reviewAddError}>{t('review.addError')}</small> : null}
-          <div className={css.reviewAddActions}>
-            <button type="button" onClick={() => { setAddingEntity(false) }}>{t('review.cancelEdit')}</button>
-            <button type="button" onClick={() => {
-              const added = sessionId !== undefined && controller.addLiveFinding(sessionId, addOriginal, addReplacement, addType)
-              if (!added) { setAddError(true); return }
-              setAddingEntity(false)
-              setAddType('')
-              setAddOriginal('')
-              setAddReplacement('')
-            }}>{t('review.add')}</button>
-          </div>
+        <label className={css.scopeChoice}><input type="checkbox" checked={addAll} disabled={disabled}
+          onChange={event => { setAddAll(event.target.checked) }} />{t('flow.addAll')}</label>
+        {addError ? <small className={css.reviewAddError} role="alert">{t('review.addError')}</small> : null}
+        <div className={css.reviewAddActions}>
+          <button type="button" onClick={() => { setAddingEntity(false) }}>{t('review.cancelEdit')}</button>
+          <button type="button" disabled={disabled || !addOriginal.trim() || !addReplacement.trim()} onClick={() => {
+            const added = sessionId !== undefined && controller.addLiveFinding(sessionId, addOriginal, addReplacement, addType, addAll)
+            if (!added) { setAddError(true); return }
+            setAddingEntity(false); setAddType(''); setAddOriginal(''); setAddReplacement('')
+          }}>{t('review.add')}</button>
         </div>
-      ) : null}
-      {live.result.policySignals.map(signal => (
-        <div className={css.policyRow} key={signal.policyId}>
-          <strong>{t('policy.CUSTOMER_KYC')}</strong>
-          <span>{t('risk.high')}</span>
-        </div>
-      ))}
-      {undoFinding !== undefined ? (
-        <div className={css.reviewUndoBar}>
-          <span>{t('review.undoDone').replace('{value}', undoFinding.original)}</span>
-          <button type="button" onClick={() => {
-            if (sessionId !== undefined) {
-              controller.setLiveFindingProtection(sessionId, undoFinding.id, true, undoFinding.replacement)
-              controller.setLiveFindingReplacement(sessionId, undoFinding.id, undoFinding.replacement)
-            }
+      </div> : null}
+      {undoFinding !== undefined ? <div className={css.reviewUndoBar} role="status">
+        <span>{t('review.undoDone').replace('{value}', undoFinding.original)}</span>
+        <button type="button" disabled={disabled} onClick={() => {
+          if (sessionId !== undefined) controller.setLiveFindingsProtection(sessionId, undoFinding.ids, true)
+          setUndoFinding(undefined)
+        }}>{t('review.undo')}</button>
+      </div> : null}
+      {kept.length > 0 ? <details className={css.keptFindings}>
+        <summary>{t('flow.kept')} ({kept.length})</summary>
+        <p>{t('review.keptWarning')}</p>
+        {kept.map(finding => <div key={finding.id}>
+          <span>{live.text.slice(finding.start, finding.end)}</span>
+          <button className={css.textButton} type="button" disabled={disabled} onClick={() => {
+            if (sessionId !== undefined) controller.setLiveFindingsProtection(sessionId, [finding.id], true)
             setUndoFinding(undefined)
-            setCancelledIds(current => {
-              const next = new Set(current)
-              next.delete(undoFinding.id)
-              return next
-            })
-          }}>{t('review.undo')}</button>
-        </div>
-      ) : null}
-      {expandedValue !== undefined ? (
-        <div className={css.entityValuePopover} role="dialog" aria-label={t('review.fullValue')}>
-          <div><strong>{expandedValue.label}</strong><button type="button" aria-label={t('review.closeValue')}
-            onClick={() => { setExpandedValue(undefined) }}><LucideIcon icon={X} size={16} /></button></div>
-          <pre>{expandedValue.value}</pre>
-        </div>
-      ) : null}
+          }}>{t('flow.restore')}</button>
+        </div>)}
+      </details> : null}
+      {live.result.policySignals.map(signal => <div className={css.policyRow} key={signal.policyId}>
+        <strong>{t('policy.CUSTOMER_KYC')}</strong><span>{t('risk.high')}</span>
+      </div>)}
+      {expandedValue !== undefined ? <div className={css.entityValuePopover} role="dialog" aria-label={t('review.fullValue')}>
+        <div><strong>{expandedValue.label}</strong><button type="button" aria-label={t('review.closeValue')}
+          onClick={() => { setExpandedValue(undefined) }}><LucideIcon icon={X} size={16} /></button></div>
+        <pre>{expandedValue.value}</pre>
+      </div> : null}
     </section>
   )
 }
-
-function AuditView({
-  controller, live, sessionId, t,
-}: {
+function AuditView({ controller, live, sessionId, snapshot, editing, onEditingChange, t }: {
   controller: PrivacyController
-  live: ReturnType<PrivacySnapshot['liveBySession']['get']>
+  live: PrivacyLiveState | undefined
   sessionId: string | undefined
+  snapshot: PrivacySnapshot
+  editing: boolean
+  onEditingChange: (value: boolean) => void
   t: PrivacyDrawerProps['t']
 }): ReactNode {
   const [rechecking, setRechecking] = useState(false)
-  if (live === undefined || live.text.trim() === '') {
-    return <div className={css.emptyState}>{t('audit.empty')}</div>
-  }
-  const payload = JSON.stringify(normalized(live.result), null, 2)
-  const incomplete = live.result.detector.status === 'partial'
-  const statusText = incomplete ? t('audit.partialStatus')
-    : live.durationMs === undefined ? t('audit.checking') : t('audit.completed')
-  const findingCount = live.result.findings.length
-  const recheck = async (): Promise<void> => {
-    if (sessionId === undefined || rechecking) return
-    setRechecking(true)
-    try { await controller.inspect(sessionId, live.text) } finally { setRechecking(false) }
-  }
-  return (
-    <div className={css.auditView}>
-      <section className={css.pipelineSection}>
-        <div className={css.monitorHeading}>
-          <div>
-            <h3>{t('audit.pipeline')}</h3>
-            <p><strong>{t('audit.method')}：</strong>{detectorSummary(live.result, t)}</p>
-          </div>
-          <div className={css.monitorMeta}>
-            <span data-status={incomplete ? 'partial' : live.durationMs === undefined ? 'checking' : 'complete'}>
-              {statusText}
-              {live.durationMs === undefined ? '' : ` · ${String(findingCount)}${t('audit.findingsUnit')} · ${String(live.durationMs)}ms`}
-            </span>
-            <button className={css.secondaryButton} type="button" disabled={sessionId === undefined || rechecking}
-              onClick={() => { void recheck() }}>
-              {rechecking ? t('audit.rechecking') : t('audit.recheck')}
-            </button>
-          </div>
-        </div>
-        <AuditFindings controller={controller} live={live} sessionId={sessionId} incomplete={incomplete} t={t} />
-        <div className={css.stage} data-stage="plain">
-          <div className={css.stageHeading}>
-            <strong>{t('audit.stage1')}</strong>
-            <CopyButton text={live.text} label={t('audit.copyOriginal')} />
-          </div>
-          <p>{live.text === '' ? '—' : <HighlightedText text={live.text} findings={live.result.findings} t={t} />}</p>
-        </div>
-        <div className={css.stage} data-stage="redacted">
-          <div className={css.stageHeading}>
-            <strong>{t('audit.stage2')}</strong>
-            <CopyButton text={live.result.redactedText} label={t('audit.copyRedacted')} />
-          </div>
-          <p>{live.result.redactedText || '—'}</p>
-        </div>
-      </section>
-
-      {incomplete ? <p className={css.partialWarning}>{t('audit.partial')}</p> : null}
-      {live.result.detector.fallback ? <p className={css.fallback}>{t('audit.fallback')}</p> : null}
-
-      <details className={css.jsonSection}>
-        <summary>
-          <span>{t('audit.json')}</span>
-          <CopyButton text={payload} label={t('audit.copyJson')} />
-        </summary>
-        <pre>{payload}</pre>
-      </details>
-    </div>
+  const review = snapshot.pendingSendReview
+  const sending = review?.status === 'sending' || (
+    snapshot.sendState?.sessionId === sessionId && snapshot.sendState?.status === 'sending'
   )
+  const state = snapshot.detectorStates[snapshot.detectorMode]
+  const bertUnavailable = snapshot.detectorMode === 'embedded' && state.status !== 'ready'
+  const checking = rechecking || live?.phase === 'checking' || review?.status === 'checking'
+  const incomplete = live?.result.detector.status === 'partial'
+  const failed = live?.phase === 'error'
+  const ready = live?.phase === 'ready' && !incomplete && !bertUnavailable
+  const recheck = async (regex = false): Promise<void> => {
+    if (sessionId === undefined || live === undefined || rechecking || sending || editing) return
+    setRechecking(true)
+    try {
+      if (regex) controller.setDetectorMode('regex')
+      await controller.inspect(sessionId, live.text)
+    } finally { setRechecking(false) }
+  }
+  if (!snapshot.enabled) return <div className={css.emptyState}>
+    <strong>{t('paused')}</strong><p>{t('audit.paused')}</p>
+    <button className={css.primaryButton} type="button" onClick={() => { controller.setEnabled(true) }}>{t('enable')}</button>
+  </div>
+  if (live === undefined || live.text.trim() === '') return <div className={css.emptyState}>
+    <p>{t('audit.empty')}</p><small>{t('flow.textOnly')}</small>
+  </div>
+  const payload = JSON.stringify(normalized(live.result), null, 2)
+  const status = sending ? t('flow.sending') : checking ? t('flow.checking')
+    : bertUnavailable ? (state.status === 'loading' ? t('flow.bertLoading') : t('flow.bertUnavailable'))
+      : failed ? t('flow.failed') : incomplete ? t('audit.partialStatus') : t('flow.ready')
+
+  return <div className={css.auditView}>
+    <section className={css.pipelineSection}>
+      <div className={css.monitorHeading}>
+        <div><h3>{t('audit.pipeline')}</h3>
+          <p><strong>{t('audit.method')}：</strong>{ready ? detectorSummary(live.result, t) : t(DETECTOR_KEYS[snapshot.detectorMode])}</p>
+        </div>
+        <div className={css.monitorMeta}>
+          <span role="status" data-status={failed || incomplete ? 'partial' : ready ? 'complete' : 'checking'}>{status}</span>
+          <button className={css.secondaryButton} type="button"
+            disabled={sessionId === undefined || checking || sending || editing || bertUnavailable}
+            onClick={() => { void recheck() }}>{checking ? t('audit.rechecking') : t('audit.recheck')}</button>
+        </div>
+      </div>
+      {bertUnavailable || failed || incomplete ? <div className={css.recoveryPanel} role="alert">
+        <p>{bertUnavailable ? t('model.embeddedNotice') : incomplete ? t('audit.partial') : t('flow.failedHint')}</p>
+        <div className={css.recoveryActions}>
+          {bertUnavailable ? <button className={css.secondaryButton} type="button"
+            disabled={state.status === 'loading' || sending || editing} onClick={() => { void controller.loadEmbedded() }}>
+            {state.status === 'loading' ? t('model.loading') : t('model.load')}
+          </button> : null}
+          {snapshot.detectorMode !== 'regex' ? <button className={css.secondaryButton} type="button"
+            disabled={checking || sending || editing} onClick={() => { void recheck(true) }}>{t('flow.useRegex')}</button> : null}
+        </div>
+      </div> : null}
+      {(ready || incomplete) && !checking ? <AuditFindings
+        key={JSON.stringify([sessionId, live.text])} controller={controller} live={live} sessionId={sessionId}
+        incomplete={incomplete === true} disabled={!ready || sending} onEditingChange={onEditingChange} t={t}
+      /> : null}
+      <div className={css.stage} data-stage="plain">
+        <div className={css.stageHeading}><strong>{t('audit.stage1')}</strong>
+          <CopyButton text={live.text} label={t('audit.copyOriginal')} /></div>
+        <p><HighlightedText text={live.text} findings={ready ? live.result.findings : []} t={t} /></p>
+      </div>
+      {ready && !checking ? <div className={css.stage} data-stage="redacted">
+        <div className={css.stageHeading}><strong>{t('audit.stage2')}</strong>
+          <CopyButton text={live.result.redactedText} label={t('audit.copyRedacted')} /></div>
+        <p>{live.result.redactedText || '—'}</p>
+      </div> : null}
+      <small className={css.scopeNote}>{t('flow.textOnly')}</small>
+    </section>
+    {ready || incomplete ? <details className={css.jsonSection}>
+      <summary><span>{t('audit.json')}</span><CopyButton text={payload} label={t('audit.copyJson')} /></summary>
+      <pre>{payload}</pre>
+    </details> : null}
+  </div>
 }
 
-function DetectionView({ controller, live, sessionId, t }: {
-  controller: PrivacyController
-  live: ReturnType<PrivacySnapshot['liveBySession']['get']>
-  sessionId: string | undefined
-  t: PrivacyDrawerProps['t']
-}): ReactNode {
-  return <div className={css.detectionView}><AuditView controller={controller} live={live} sessionId={sessionId} t={t} /></div>
+function reviewLiveState(review: PrivacySnapshot['pendingSendReview'], live: PrivacyLiveState | undefined, regexRevision: number): PrivacyLiveState | undefined {
+  const first = review?.parts[review.activePartIndex]
+  if (first === undefined || review === undefined) return undefined
+  return {
+    text: first.text, result: first.result, updatedAt: 0,
+    phase: review.status === 'checking' ? 'checking' : live?.text === first.text ? live.phase : 'ready',
+    regexRevision: live?.regexRevision ?? regexRevision,
+  }
 }
-
-function reviewLiveState(review: PrivacySnapshot['pendingSendReview']): PrivacyLiveState | undefined {
-  const first = review?.parts[0]
-  if (first === undefined) return undefined
-  return { text: first.text, result: first.result, updatedAt: 0 }
-}
-
 function ruleErrorKey(code: RegexErrorCode): PrivacyKey { return `rules.error.${code}` }
 
 function emptyRule(): EditableRegexRule {
@@ -807,8 +837,11 @@ function ModelView({ controller, snapshot, t }: {
   }
   const embeddedState = snapshot.detectorStates.embedded
   const zeroClaveState = snapshot.detectorStates.zeroclave
-  const showTelemetry = snapshot.telemetry.availability === 'available' || snapshot.telemetry.consent
   const [telemetryDetailsOpen, setTelemetryDetailsOpen] = useState(false)
+  const telemetryStatus: PrivacyKey = snapshot.telemetry.lockedByGpc ? 'telemetry.gpc'
+    : snapshot.telemetry.availability === 'checking' ? 'telemetry.checking'
+      : snapshot.telemetry.availability === 'unavailable' ? 'telemetry.unavailable'
+        : snapshot.telemetry.consent ? 'flow.telemetryOn' : 'telemetry.off'
   return (
     <div className={css.tabPage}>
       <h3>{t('model.title')}</h3>
@@ -907,7 +940,7 @@ function ModelView({ controller, snapshot, t }: {
       {snapshot.detectorMode === 'embedded'
         ? <p className={css.modelNote}>{t('model.embeddedNotice')}</p>
         : null}
-      {showTelemetry ? <section className={css.telemetrySection}>
+      <section className={css.telemetrySection}>
         <div className={css.telemetryHeading}>
           <div>
             <strong>{t('telemetry.title')}</strong>
@@ -928,38 +961,68 @@ function ModelView({ controller, snapshot, t }: {
             onChange={(consent) => { controller.setTelemetryConsent(consent) }}
           />
         </div>
+        <p className={css.scopeNote} role="status">{t(telemetryStatus)}</p>
         {telemetryDetailsOpen ? <div className={css.telemetryDetails}>
           <p>{t('telemetry.detailParagraph1')}</p>
           <p>{t('telemetry.detailParagraph2')}</p>
           <p>{t('telemetry.detailParagraph3')}</p>
         </div> : null}
-      </section> : null}
+      </section>
     </div>
   )
 }
 
-export function PrivacyDrawer({ controller, t, useSessions, sessions, conversation }: PrivacyDrawerProps): ReactNode {
+export function PrivacyDrawer({ controller, t, useSessions }: PrivacyDrawerProps): ReactNode {
   const snapshot = usePrivacy(controller)
   const drawerBodyRef = useRef<HTMLDivElement>(null)
-  const currentSessionId = useSessions(state => state.current)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const currentSessionId = useSessions(selectedSessionId)
   const review = snapshot.pendingSendReview
-  const reviewLive = reviewLiveState(review)
-  const displayedSessionId = review?.sessionId ?? snapshot.activeSessionId ?? currentSessionId
+  const displayedSessionId = review?.sessionId ?? currentSessionId ?? snapshot.activeSessionId
   const live = displayedSessionId === undefined ? undefined : snapshot.liveBySession.get(displayedSessionId)
-  const displayedLive = reviewLive ?? live
-  const [sending, setSending] = useState(false)
+  const displayedLive = reviewLiveState(review, live, snapshot.regexRevision) ?? live
+  const [editing, setEditing] = useState(false)
+  const [requestError, setRequestError] = useState(false)
+  const sendState = snapshot.sendState?.sessionId === displayedSessionId ? snapshot.sendState : undefined
+  const sending = review?.status === 'sending' || sendState?.status === 'sending'
+  const checking = review?.status === 'checking' || displayedLive?.phase === 'checking'
+    || (sendState?.status === 'preparing' && review === undefined)
+  const failedSend = sendState?.status === 'error' || review?.status === 'error'
+  const activeTab = review === undefined ? snapshot.activeTab : 'audit'
   const tabs: Array<[PrivacySnapshot['activeTab'], PrivacyKey]> = [
-    ['audit', 'tab.audit'],
-    ['model', 'tab.model'],
-    ['rules', 'tab.rules'],
+    ['audit', 'tab.audit'], ['model', 'tab.model'], ['rules', 'tab.rules'],
   ]
   useEffect(() => {
     if (drawerBodyRef.current !== null) drawerBodyRef.current.scrollTop = 0
-  }, [snapshot.activeTab, snapshot.pendingSendReview?.id])
+    setRequestError(false)
+  }, [activeTab, displayedSessionId])
+  useEffect(() => {
+    if (!snapshot.open) return
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+    closeRef.current?.focus()
+    return () => { if (previouslyFocused?.isConnected) previouslyFocused.focus() }
+  }, [snapshot.open])
   if (!snapshot.open) return null
 
+  const close = (): void => {
+    if (sending) return
+    controller.cancelSendReview()
+    controller.setOpen(false)
+  }
+  const canConfirm = snapshot.enabled && !editing && !sending && !checking
+    && displayedLive?.phase === 'ready' && displayedLive.result.detector.status !== 'partial'
+    && (review?.status === 'reviewing' || (
+      displayedSessionId !== undefined && controller.canRequestComposerSend(displayedSessionId)
+    ))
+  const confirm = (): void => {
+    if (!canConfirm || displayedSessionId === undefined) return
+    setRequestError(false)
+    if (review?.status === 'reviewing') controller.confirmSendReview()
+    else void controller.requestComposerSend(displayedSessionId).catch(() => { setRequestError(true) })
+  }
   return (
-    <aside className={css.drawer} data-zero-privacy-drawer="open">
+    <aside className={css.drawer} data-zero-privacy-drawer="open" aria-label={t('headerAction')}
+      onKeyDown={event => { if (event.key === 'Escape' && !editing) { event.stopPropagation(); close() } }}>
       <header className={css.drawerHeader}>
         <div className={css.brandIdentity}>
           <img className={css.brandLogo} src={zeroclaveLogo} alt={t('brand')} />
@@ -968,89 +1031,48 @@ export function PrivacyDrawer({ controller, t, useSessions, sessions, conversati
         <div className={css.headerStatus}>
           <span data-enabled={snapshot.enabled || undefined}>{snapshot.enabled ? t('active') : t('paused')}</span>
           <SwitchControl checked={snapshot.enabled} label={snapshot.enabled ? t('disable') : t('enable')}
-            onChange={(enabled) => { controller.setEnabled(enabled) }} />
+            disabled={sending} onChange={enabled => { controller.setEnabled(enabled) }} />
         </div>
-        <button className={css.iconButton} type="button" aria-label={t('close')} onClick={() => {
-          if (snapshot.pendingSendReview !== undefined) controller.cancelSendReview()
-          controller.setOpen(false)
-        }}><LucideIcon icon={X} size={18} /></button>
+        <button ref={closeRef} className={css.iconButton} type="button" disabled={sending}
+          aria-label={t('close')} onClick={close}><LucideIcon icon={X} size={18} /></button>
       </header>
       <nav className={css.tabs}>
-        {tabs.map(([id, label]) => (
-          <button
-            data-selected={snapshot.activeTab === id || undefined}
-            disabled={snapshot.pendingSendReview !== undefined}
-            key={id}
-            type="button"
-            onClick={() => { controller.setTab(id) }}
-          >
-            {t(label)}
-          </button>
-        ))}
+        {tabs.map(([id, label]) => <button data-selected={activeTab === id || undefined}
+          disabled={review !== undefined || sending || editing} key={id} type="button"
+          onClick={() => { controller.setTab(id) }}>{t(label)}</button>)}
       </nav>
       <div className={css.drawerBody} data-zero-privacy-scroll ref={drawerBodyRef}>
-        {review !== undefined ? (
-          <AuditView controller={controller} live={displayedLive} sessionId={displayedSessionId} t={t} />
-        ) : null}
-        {review === undefined && snapshot.activeTab === 'audit' ? (
-          <DetectionView
-            controller={controller}
-            live={live}
-            sessionId={displayedSessionId}
-            t={t}
-          />
-        ) : null}
-        {review === undefined && snapshot.activeTab === 'rules'
-          ? <RulesView controller={controller} snapshot={snapshot} t={t} /> : null}
-        {review === undefined && snapshot.activeTab === 'model'
-          ? <ModelView controller={controller} snapshot={snapshot} t={t} /> : null}
+        {activeTab === 'audit' ? <>
+          {review !== undefined && review.parts.length > 1 ? <div className={css.partSelector}>
+            {review.parts.map((_, index) => <button type="button" key={index}
+              className={css.secondaryButton} aria-pressed={index === review.activePartIndex}
+              disabled={editing || sending || checking}
+              onClick={() => { controller.setReviewPart(index) }}>{t('review.currentInput')} {index + 1}</button>)}
+          </div> : null}
+          <AuditView key={displayedSessionId} controller={controller} live={displayedLive} sessionId={displayedSessionId}
+            snapshot={snapshot} editing={editing} onEditingChange={setEditing} t={t} />
+        </> : activeTab === 'rules' ? <RulesView controller={controller} snapshot={snapshot} t={t} />
+          : <ModelView controller={controller} snapshot={snapshot} t={t} />}
       </div>
       <footer className={css.drawerFooter}>
-        {snapshot.pendingSendReview !== undefined ? (
+        {editing ? <p className={css.footerNotice} role="status">{t('flow.unsaved')}</p> : null}
+        {failedSend ? <p className={css.footerError} role="alert">{t('flow.sendFailed')}</p> : null}
+        {requestError ? <p className={css.footerError} role="alert">{t('flow.requestFailed')}</p> : null}
+        {activeTab === 'audit' && displayedLive !== undefined && displayedLive.text.trim() !== '' ? (
           <div className={css.drawerSendActions}>
-            <button className={css.secondaryButton} type="button" onClick={() => { controller.cancelSendReview() }}>
-              {t('review.cancelSend')}
-            </button>
-            <button className={css.primaryButton} type="button" onClick={() => { controller.confirmSendReview() }}>
-              {t('review.confirmSend')}
-            </button>
-          </div>
-        ) : snapshot.activeTab === 'audit' && live?.result.findings.length !== 0 && displayedSessionId !== undefined ? (
-          <div className={css.drawerSendActions}>
-            <button className={css.secondaryButton} type="button" onClick={() => { controller.setOpen(false) }}>
-              {t('review.cancelSend')}
-            </button>
-            <button className={css.primaryButton} type="button" disabled={sending}
-              onClick={() => {
-                const session = sessions.binding(displayedSessionId)?.session
-                if (session === undefined || live === undefined) return
-                setSending(true)
-                const sendSession = (conversation as {
-                  sendSession?: (target: object, text: string, attachments: readonly string[], mode: 'queue') => Promise<unknown>
-                }).sendSession
-                if (sendSession === undefined) { setSending(false); return }
-                void sendSession.call(conversation, session, live.result.redactedText, [], 'queue')
-                  .then((outcome: unknown) => {
-                    if (typeof outcome !== 'object' || outcome === null || !('kind' in outcome)
-                      || outcome.kind !== 'success') return
-                    const scope = sessions.scope(displayedSessionId)
-                    const input = (conversation as {
-                      input?: { for?: (target: object) => { setDraft(text: string): void } }
-                    }).input
-                    if (scope !== undefined && input?.for !== undefined) input.for(scope).setDraft('')
-                  })
-                  .finally(() => { setSending(false) })
-              }}>
-              {t('review.confirmSend')}
+            <button className={css.secondaryButton} type="button" disabled={sending} onClick={close}>{t('review.cancelSend')}</button>
+            <button className={css.primaryButton} type="button" disabled={!canConfirm} onClick={confirm}>
+              {sending ? t('flow.sending') : checking ? t('flow.checking') : failedSend ? t('flow.retrySend') : t('review.confirmSend')}
             </button>
           </div>
         ) : null}
-        {snapshot.pendingSendReview === undefined ? <div className={css.drawerFooterMeta}>
+        <div className={css.drawerFooterMeta}>
           <a className={css.communityLink} href="https://zeroclave.com/community" target="_blank" rel="noreferrer">
             <i />{t('footer.core')}
           </a>
-          <button type="button" onClick={() => { controller.setTab('model') }}>{t('footer.configure')} →</button>
-        </div> : null}
+          <button type="button" disabled={review !== undefined || sending || editing}
+            onClick={() => { controller.setTab('model') }}>{t('footer.configure')} →</button>
+        </div>
       </footer>
     </aside>
   )

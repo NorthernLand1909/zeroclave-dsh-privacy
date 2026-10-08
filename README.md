@@ -9,7 +9,7 @@
 [![CI](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-0ca66d.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/DeepSeek%20Harness-Web%20%7C%20Desktop%20Web%20Surface-1769d1.svg)](https://github.com/deepseek-ai/deepseek-harness)
-[![Version](https://img.shields.io/badge/version-alpha.25-f0a51b.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-alpha.27-f0a51b.svg)](package.json)
 
 [🚀 上传到 DeepSeek Stream](https://deepseek.stream/upload) · [📚 开发指南](https://deepseek.stream/guide) · [💬 ZeroClave 社区](https://zeroclave.com/community)
 
@@ -31,7 +31,7 @@
                          ↘  发送失败：保留原草稿
 ```
 
-手动确认模式下，按回车会进入同一个隐私检测面板；用户可以逐项修改脱敏值、取消保护或撤销。点击“确认脱敏并发送”后，才会继续发送。
+手动确认模式下，“隐私检测”“查看详情”和按回车使用同一个检测面板。用户可以在面板内修改脱敏值、取消保护或恢复保护，点击“确认脱敏并发送”直接继续 Harness 原生发送流程。附件、队列和草稿清理仍由 Harness 管理。
 
 ## 功能概览
 
@@ -42,6 +42,12 @@
 - 支持自定义敏感实体、正则规则，以及规则的新增、编辑、复制、启用、停用和删除。
 - 支持还原：模型回复保留替换标记时，可在消息显示和复制时恢复对应内容。
 - 可选匿名使用统计，默认由部署配置决定，用户始终可以关闭。
+
+## Harness 版本兼容
+
+alpha.27 的安装声明包含 DSH `0.2.0-rc.2`，同时保留 DSH `0.1.3-alpha.1` 兼容。侧栏会话选择适配两代接口，发送取消和检测失败会释放 Harness 创建的临时消息。浏览器和桌面版使用同一插件包。
+
+CI 仍使用下文的 0.1.3 构建基线。针对 0.2.0-rc.2 的构建使用上游提交 `639ed015397290b3745d163aafe02ffee4aa3f84`，将插件放在 `packages/extensions/zeroclave-privacy`；新版构建器不允许第三方插件依赖 `packages/experimental` 中的输入。
 
 ## 检测方式
 
@@ -55,7 +61,7 @@
 
 本地正则无需下载，适合中文合同中的结构化字段。BERT 模型主要面向英文；中文合同建议以本地正则为主。BERT 不可用时可以在设置中明确切换到本地正则，不会默认为安全。
 
-ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。需要回退时，请在“检测设置”中手动选择“本地正则”。插件不会把 ZeroClave 失败静默解释为安全。
+ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。检测页提供重新检测和“改用本地正则”；切换后需要重新检测并确认发送。BERT 未加载或加载失败时也会阻止发送，需要加载模型或明确选择本地正则。用户选择的检测方式保存在当前浏览器。
 
 ### ZeroClave 网关边界
 
@@ -81,11 +87,11 @@ https://zeroclave.com/v1/pii/detect
 
 1. 插件检测当前消息文本。
 2. 右侧面板显示“当前输入”“脱敏输出”和敏感实体列表。
-3. 用户可以修改脱敏值、取消某一项保护，或者撤销取消操作。
-4. 点击“确认脱敏并发送”后，直接发送当前脱敏文本并清空草稿。
+3. 用户可以修改脱敏值、取消某一项保护，或者在“保留原文”中逐项恢复。相同内容的多处命中可展开查看，并选择仅修改此处或全部相同内容。
+4. 保存编辑后点击“确认脱敏并发送”。按钮显示发送中并阻止重复提交；发送成功后收起确认面板，由 Harness 清理本次草稿。
 5. 点击“取消发送”则保留原草稿。
 
-取消保护会明确提示该内容将以原文发送给大模型。只有发送成功后输入框才会清空；失败时原输入仍然保留。
+取消保护会明确提示该内容将以原文发送给大模型。同一草稿重新检测时保留人工修改，草稿文字改变后重新检测并重置旧选择，避免将旧实体位置应用到新文字。检测预览的占位符只在内存中保留，确认发送时才持久化本地恢复映射。只有发送成功后输入框才会清空；失败时保留输入和人工修改，可在原面板重试。
 
 ### 自动脱敏
 
@@ -219,13 +225,15 @@ GitHub Actions 会在 `main`、`alpha` push、Pull Request 和手动运行时执
 正式发布时，先确认 `package.json` 和 `plugin.json` 版本一致，再创建同版本标签：
 
 ```bash
-git tag -a v0.1.0-alpha.25 -m "Release v0.1.0-alpha.25"
-git push origin v0.1.0-alpha.25
+git tag -a v0.1.0-alpha.27 -m "Release v0.1.0-alpha.27"
+git push origin v0.1.0-alpha.27
 ```
 
 推送 `v*` 标签会触发 CI。所有检查通过后，Actions 会自动创建 GitHub Release，并附上 `.zip`、`.tgz` 和 SHA-256 校验文件。版本标签必须去掉 `v` 后与包版本完全一致。
 
 ## 本地安装到 DSH
+
+桌面版打开“插件 → 添加插件”，在“包名或地址”中填入下载好的 `.tgz` 文件的绝对路径，安装完成后点击“立即启用”。也可以填写包含 `package.json` 和 `lib/` 的已编译插件目录。升级已安装版本时，需要先卸载旧版再安装新版。`.zip` 用于 DeepSeek Stream 上传。
 
 在匹配的 Harness checkout 中执行：
 
@@ -234,7 +242,7 @@ pnpm dsh plugin --profile web add ./packages/experimental/zeroclave-privacy
 pnpm dsh web --no-open
 ```
 
-修改插件源码或替换构建包后，需要重新构建并重启对应 DSH Web profile。直接从 GitHub 源码 URL 安装目前不受支持；请使用 Harness workspace 构建出的 npm tarball。
+修改插件源码或替换构建包后，需要重新构建并重启对应 DSH Web profile。DSH 支持 Git 仓库安装，但本仓库不提交编译后的 `lib/`，因此请使用 Actions 或 Release 生成的 `.tgz` 安装包。
 
 ## 已知限制
 

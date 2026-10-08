@@ -80,6 +80,9 @@ export interface PendingSendReview {
   parts: readonly { text: string; result: ScanResult }[]
   redactByFinding: Readonly<Record<string, boolean>>
   replacementByFinding: Readonly<Record<string, string>>
+  status: 'reviewing' | 'checking' | 'sending' | 'error'
+  activePartIndex: number
+  error?: string
 }
 
 export interface PolicySignal {
@@ -134,6 +137,9 @@ export interface PrivacyLiveState {
   result: ScanResult
   updatedAt: number
   durationMs?: number
+  phase: 'checking' | 'ready' | 'error'
+  error?: string
+  regexRevision: number
 }
 
 export interface PrivacySnapshot {
@@ -150,4 +156,5 @@ export interface PrivacySnapshot {
   sendPolicy: SendPolicy
   telemetry: TelemetryRuntimeState
   pendingSendReview?: PendingSendReview
+  sendState?: { sessionId: string; status: 'preparing' | 'sending' | 'error'; error?: string }
 }

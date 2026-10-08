@@ -49,6 +49,147 @@
   background: #13b779;
 }
 
+.headerButton:not([data-enabled]) .liveDot {
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.primaryButton:disabled,
+.drawer button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.scopeChoice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.scopeChoice input {
+  width: auto;
+}
+
+.findingGroup {
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.findingGroup:last-child {
+  border-bottom: 0;
+}
+
+.findingGroup > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.findingGroup > summary::before {
+  content: '›';
+  transition: transform 120ms ease;
+}
+
+.findingGroup[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.findingGroup > summary code {
+  flex: 1;
+  min-width: 50px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupActions,
+.recoveryActions,
+.partSelector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.groupActions {
+  justify-content: flex-end;
+  padding: 0 12px 8px;
+}
+
+.findingOccurrence > p {
+  padding: 8px 12px 0;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.keptFindings {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.keptFindings summary {
+  cursor: pointer;
+}
+
+.keptFindings > p {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.keptFindings > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.keptFindings > div > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.keptFindings button {
+  flex: none;
+}
+
+.recoveryPanel {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, #d59020 50%, var(--dsw-alias-border-l2));
+  border-radius: 7px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.recoveryPanel p {
+  margin: 0 0 10px;
+}
+
+.scopeNote {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.footerNotice,
+.footerError {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.footerError {
+  color: #be4b35;
+}
+
 .footerButton {
   display: flex;
   align-items: center;
@@ -389,7 +530,6 @@
 }
 
 .auditView,
-.detectionView,
 .tabPage {
   display: grid;
   gap: 22px;

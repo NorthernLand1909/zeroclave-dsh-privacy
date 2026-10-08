@@ -4,6 +4,15 @@ import { PrivacyVault } from '../src/vault.ts'
 import { memoryStore } from './memory-store.ts'
 
 describe('local reversible redaction', () => {
+  it('keeps preview mappings only in memory and sends the exact preview token', async () => {
+    const store = memoryStore()
+    const vault = new PrivacyVault(store)
+    const preview = await vault.preview('s1', 'demo@example.com', scanRegex('demo@example.com'))
+    expect(await store.read('s1')).toEqual([])
+    const sent = await vault.redact('s1', 'demo@example.com', preview)
+    expect(sent.redactedText).toBe(preview.redactedText)
+    expect(await store.read('s1')).toHaveLength(1)
+  })
   it('keeps the original contract intact while creating a reversible outbound copy', async () => {
     const text = '采购框架协议\n合同编号：TEST-2026-001\n甲方（买方）：示例采购有限公司\n通讯地址：深圳市示例路100号\n邮箱：demo@example.com'
     const vault = new PrivacyVault(memoryStore())
