@@ -52,13 +52,13 @@
 | 本地正则 | 浏览器 | 不联网 | 结构化字段、密钥、合同编号、账号、邮箱、电话等 |
 | 浏览器本地 BERT | 浏览器 WebAssembly | 首次使用下载模型文件；不会上传消息文本 | 英文自然语言补充检测 |
 | ZeroClave API | DSH Host + ZeroClave Gateway | 浏览器只请求同源 DSH Host，由 Host 转发 HTTPS 请求 | 增强实体识别，适合需要网关检测的部署 |
-| 自定义本地模型 | 浏览器本地 Worker + WebGPU | 不联网；用户选择的模型目录、权重与原文只在当前页面/Worker 内存中处理 | Qwen3.5 Transformers 目录；需重新选择目录 |
+| 自定义本地模型（开发中） | DSH Host + 本机 vLLM | Host 只经 `127.0.0.1` 调用受监管子进程；原文会进入本机 Host 和 vLLM | Qwen3.5 Transformers 本机目录 |
 
 本地正则无需下载，适合中文合同中的结构化字段。BERT 模型主要面向英文；中文合同建议以本地正则为主。BERT 不可用时可以在设置中明确切换到本地正则，不会默认为安全。
 
 ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。需要回退时，请在“检测设置”中手动选择“本地正则”。插件不会把 ZeroClave 失败静默解释为安全。
 
-自定义本地模型选项直接读取用户选择的 Transformers 模型目录，至少需要 `config.json`、`model.safetensors`（或分片）、`tokenizer.json`、tokenizer 配置和 chat template；不要求 GGUF 或独立 manifest。插件会在进入 GPU/Worker 初始化前校验 Qwen3.5 架构、safetensors header/index、tokenizer、上下文长度和内置输出协议。模型路径不写入代码，Host 不会把模型权重发送给浏览器；浏览器只把用户选择的文件交给本地 Worker。当前会话只保留非敏感模型 metadata，不保存绝对路径、模型内容或原文。刷新页面、重启浏览器、插件重载或文件句柄失效后必须重新选择。模型未完成校验或运行时未就绪时，发送会被阻止，不会自动回退到正则。
+自定义本地模型正在迁移到本机 vLLM 路线。通过 Host 配置启用 auto-start 后，Host 使用 argv 数组和 `shell: false` 调用指定 Conda 环境，强制 vLLM 绑定 `127.0.0.1`，并为每次启动生成仅保存在 Host 内存中的鉴权 token。服务依次通过健康检查、鉴权检查、模型名称检查和固定合成 PII 预热后才进入 `ready`；DSH 生命周期结束时会终止受监管进程。此路线不会把模型权重交给浏览器，但待检测原文会进入本机 DSH Host 和本机 vLLM。阶段 5–7 的同源 API、完整检测协议和设置界面完成前，该检测器仍保持开发中状态。
 
 ### ZeroClave 网关边界
 
@@ -246,8 +246,7 @@ pnpm dsh web --no-open
 - ZeroClave 不是 E2EE 通道；网关和 DSH Host 在检测阶段可见原文。
 - 直接 Host API、自动化脚本和 composer 之外的发送路径不在浏览器适配器的完整保护范围内。
 - 本地恢复映射不跨浏览器、设备或 origin 同步。
-- 自定义本地模型使用浏览器 Worker 中的 WebGPU Transformers/safetensors 运行时。浏览器必须提供 WebGPU；运行时不会回退到 CPU，且受浏览器单个 ArrayBuffer、可用显存和驱动限制。
-- 注意：当前锁定的 `@huggingface/transformers` 3.8.1 浏览器 backend 原生加载 ONNX，不包含 raw safetensors Qwen3.5 执行器；目录校验和 Worker 隔离已完成，但在替换为支持 raw safetensors/Qwen3.5 的 WebGPU backend 前，实际加载会以明确的 runtime error 失败。
+- 本机 vLLM Supervisor、健康检查、合成 PII 预热、自动启动和进程回收已经实现；同源管理 API、完整检测调用和前端配置界面仍属于后续阶段，因此当前还不能通过 UI 使用该路线。
 - 自定义规则使用 JavaScript 正则语法，当前没有 RE2 导入/导出功能。
 - 浏览器历史、搜索和非 Chat 视图可能只保留 Host 侧的脱敏表示。
 
