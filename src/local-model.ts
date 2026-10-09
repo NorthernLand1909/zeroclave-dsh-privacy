@@ -12,6 +12,10 @@ export type LocalModelErrorCode =
   | 'tokenizer_missing' | 'quantization_unsupported' | 'context_too_short' | 'manifest_invalid'
   | 'manifest_architecture_mismatch' | 'manifest_model_mismatch' | 'output_protocol_unsupported'
   | 'runtime_unavailable' | 'webgpu_unavailable' | 'device_lost' | 'out_of_memory' | 'load_timeout' | 'inference_timeout' | 'output_invalid' | 'partial_result' | 'not_configured' | 'not_ready'
+  | 'conda_not_found' | 'conda_env_missing' | 'vllm_missing' | 'vllm_version_unsupported'
+  | 'cuda_unavailable' | 'dtype_unsupported' | 'model_incompatible' | 'startup_timeout'
+  | 'health_check_failed' | 'warmup_failed' | 'process_crashed' | 'busy' | 'response_too_large'
+  | 'input_too_long'
 
 export class LocalModelError extends Error {
   constructor(readonly code: LocalModelErrorCode, message: string) {

@@ -6,7 +6,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { PrivacyController } from '../controller.ts'
-import { LocalModelDetector } from '../local-model.ts'
+import { HostLocalModelDetector } from '../host-local-model.ts'
 import { installSendRedaction } from '../send.ts'
 import { installDisplayRestoration } from './display.tsx'
 import { FooterButton, HeaderButton, PrivacyDock, PrivacyDrawer } from './PrivacySurfaces.tsx'
@@ -23,8 +23,9 @@ export const inject = ['slots', 'locale', 'conversation', 'sessions']
 export function apply(ctx: ClientContext): void {
   const controller = new PrivacyController(
     undefined, undefined, undefined, undefined,
-    new LocalModelDetector(),
+    new HostLocalModelDetector(),
   )
+  void controller.refreshLocalVllm()
   void controller.initializeTelemetry()
   ctx.effect(() => () => { void controller.dispose() }, 'zeroclave-privacy: controller')
   ctx.effect(() => installSendRedaction(ctx.conversation, controller), 'zeroclave-privacy: outgoing prompts')

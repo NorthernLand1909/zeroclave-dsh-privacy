@@ -100,20 +100,68 @@ describe('local-model output protocol', () => {
     const text = '张😀é Alice'
     const startInCodePoints = Array.from(text.slice(0, text.indexOf('Alice'))).length
     const parsed = parseModelOutput(JSON.stringify({
+      status: 'complete',
       offsetUnit: 'codepoint',
       entities: [{ type: 'PERSON', start: startInCodePoints, end: startInCodePoints + 5, text: 'Alice' }],
     }), text, ['PERSON'])
     expect(parsed.entities[0]).toMatchObject({ start: text.indexOf('Alice'), end: text.length, text: 'Alice' })
 
     const prompt = buildQwenPrompt(text, manifest as PromptManifestLike)
-    expect(prompt).toContain('<|zc-data|>' + JSON.stringify({ text }) + '<|/zc-data|>')
+    expect(prompt).toContain('<|zc-data|>' + JSON.stringify({ context: text, question: 'Identify every PII entity in context.' }) + '<|/zc-data|>')
     expect(prompt).not.toContain('{"entities":[]}')
   })
 
   it('rejects a model entity whose returned text does not match the source', () => {
     expect(() => parseModelOutput(JSON.stringify({
+      status: 'complete', offsetUnit: 'utf16',
       entities: [{ type: 'PERSON', start: 0, end: 3, text: 'Bob' }],
     }), 'Alice', ['PERSON'])).toThrow(/does not match/u)
+  })
+
+  it('accepts only a complete, exact JSON protocol and treats an empty complete result as valid', () => {
+    expect(parseModelOutput('{"status":"complete","offsetUnit":"utf16","entities":[]}', '无个人信息', ['PERSON']).entities).toEqual([])
+    for (const output of [
+      '```json\n{"status":"complete","offsetUnit":"utf16","entities":[]}\n```',
+      '{"status":"partial","offsetUnit":"utf16","entities":[]}',
+      '{"status":"complete","offsetUnit":"utf16","entities":[],"reason":"none"}',
+      '{"status":"complete","offsetUnit":"utf16","entities":[{"type":"PERSON","start":0,"end":2,"text":"张三","note":"x"}]}',
+    ]) expect(() => parseModelOutput(output, '张三', ['PERSON'])).toThrow()
+  })
+
+  it('accepts the Qwen native trained-task array and derives safe UTF-16 offsets', () => {
+    const parsed = parseModelOutput('[{"pii":"demo@example.com","type":"email","confidence":"0.99"}]',
+      'Contact demo@example.com', ['EMAIL'])
+    expect(parsed).toMatchObject({ offsetUnit: 'utf16', entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com', confidence: 0.99 }] })
+    expect(() => parseModelOutput('[{"pii":"other@example.com","type":"email","confidence":"0.99"}]',
+      'Contact demo@example.com', ['EMAIL'])).toThrow(/does not match/u)
+    expect(() => parseModelOutput('[{"pii":"demo@example.com","type":"email","confidence":"0.99","extra":1}]',
+      'Contact demo@example.com', ['EMAIL'])).toThrow()
+  })
+
+  it('validates emoji and combining-mark boundaries in both offset units', () => {
+    const text = '😀e\u0301巴彬'
+    const output = JSON.stringify({
+      status: 'complete', offsetUnit: 'codepoint',
+      entities: [{ type: 'PERSON', start: 3, end: 5, text: '巴彬', confidence: 0.9 }],
+    })
+    expect(parseModelOutput(output, text, ['PERSON']).entities[0]).toMatchObject({ start: 4, end: 6, text: '巴彬' })
+    expect(() => parseModelOutput(JSON.stringify({
+      status: 'complete', offsetUnit: 'utf16', entities: [{ type: 'PERSON', start: 3, end: 5, text: '巴彬' }],
+    }), text, ['PERSON'])).toThrow(/does not match/u)
+  })
+
+  it('parses a golden Chinese sample shaped like deepseek_annotated.jsonl', () => {
+    const context = '2015年6月1日,巴彬驾驶粤A8R446号车辆，保险金额为908000元。'
+    const samples = [
+      ['DATE_TIME', '2015年6月1日'], ['PERSON', '巴彬'], ['CONTRACT_ID', '粤A8R446号'], ['FINANCIAL', '908000元'],
+    ] as const
+    const entities = samples.map(([type, text]) => {
+      const start = context.indexOf(text)
+      return { type, start, end: start + text.length, text }
+    })
+    const parsed = parseModelOutput(JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities }), context,
+      ['DATE_TIME', 'PERSON', 'CONTRACT_ID', 'FINANCIAL'])
+    expect(parsed.entities.map(entity => [entity.type, entity.text])).toEqual(samples)
   })
 })
 

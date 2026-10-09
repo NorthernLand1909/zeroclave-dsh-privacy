@@ -40,8 +40,8 @@ function config(): ValidatedLocalVllmConfig {
 
 function warmupResponse(valid = true): Response {
   const content = valid
-    ? JSON.stringify({ entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com', confidence: 1 }], complete: true })
-    : JSON.stringify({ entities: [], complete: true })
+    ? JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com', confidence: 1 }] })
+    : JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [] })
   return Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] })
 }
 
@@ -113,6 +113,7 @@ describe('LocalVllmSupervisor', () => {
     expect(supervisor.snapshot()).toMatchObject({
       status: 'warmup_error',
       error: { code: 'warmup_failed' },
+      diagnostic: { stage: 'warmup', code: 'expected_email_missing' },
     })
     expect(child.signals).toEqual(['SIGTERM'])
   })
@@ -137,6 +138,7 @@ describe('LocalVllmSupervisor', () => {
     expect(logs).not.toContain(config().modelDirectory)
     expect(logs).toContain('[redacted-token]')
     expect(logs).toContain('[redacted-model-path]')
+    expect(logs).not.toMatch(/127\.0\.0\.1:\d+/u)
   })
 
   it('never accepts a models endpoint that does not enforce authentication', async () => {
@@ -182,8 +184,8 @@ describe('LocalVllmSupervisor', () => {
       if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: LOCAL_VLLM_MODEL_NAME }] })
       completions += 1
       const content = completions === 1
-        ? JSON.stringify({ entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com' }], complete: true })
-        : JSON.stringify({ entities: [{ type: 'EMAIL', start: 6, end: 22, text: 'demo@example.com', confidence: 0.99 }], status: 'complete' })
+        ? JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com' }] })
+        : JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [{ type: 'EMAIL', start: 6, end: 22, text: 'demo@example.com', confidence: 0.99 }] })
       const response = Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] })
       Object.defineProperty(response, 'url', { value: url })
       return response

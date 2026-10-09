@@ -43,6 +43,9 @@ export type PrivacyKey =
   | 'model.download'
   | 'model.embeddedNotice'
   | 'model.localModel' | 'model.localModelDesc' | 'model.chooseModel' | 'model.chooseManifest' | 'model.chooseDirectory' | 'model.loadLocalDirectory' | 'model.loadLocal' | 'model.localSelected' | 'model.localMetadata' | 'model.localRuntimeNotice'
+  | 'model.condaExecutable' | 'model.condaEnvironment' | 'model.environmentKind' | 'model.environmentName' | 'model.environmentPrefix'
+  | 'model.modelDirectory' | 'model.gpuMemory' | 'model.maxLength' | 'model.dtype' | 'model.tensorParallel' | 'model.autoStart'
+  | 'model.applyStart' | 'model.stop' | 'model.restart' | 'model.refresh' | 'model.diagnostics' | 'model.diagnosticTitle' | 'model.noDiagnostics' | 'model.serviceStatus' | 'model.savedSummary'
   | 'telemetry.title' | 'telemetry.summary' | 'telemetry.consent' | 'telemetry.on' | 'telemetry.off'
   | 'telemetry.checking' | 'telemetry.unavailable' | 'telemetry.gpc' | 'telemetry.detail' | 'telemetry.network'
   | 'telemetry.detailsLink' | 'telemetry.detailParagraph1' | 'telemetry.detailParagraph2' | 'telemetry.detailParagraph3'
@@ -207,7 +210,13 @@ export const zh: Record<PrivacyKey, string> = {
   'model.loadLocal': '加载本地模型',
   'model.localSelected': '已选择',
   'model.localMetadata': '模型信息',
-  'model.localRuntimeNotice': '浏览器不会读取模型文件或连接 vLLM；Host 服务未就绪、推理失败或输出非法时，发送会保持阻止。前端配置界面将在后续阶段接入。',
+  'model.localRuntimeNotice': '浏览器不会读取模型文件或连接 vLLM；Host 服务未就绪、推理失败或输出非法时，发送会保持阻止。',
+  'model.condaExecutable': 'Conda 可执行文件', 'model.condaEnvironment': 'Conda 环境', 'model.environmentKind': '环境定位方式',
+  'model.environmentName': '环境名称', 'model.environmentPrefix': '环境绝对路径', 'model.modelDirectory': '模型目录',
+  'model.gpuMemory': 'GPU 显存比例', 'model.maxLength': '最大上下文', 'model.dtype': '数据类型', 'model.tensorParallel': '并行 GPU 数',
+  'model.autoStart': '保存后自动启动', 'model.applyStart': '应用并启动', 'model.stop': '停止', 'model.restart': '重启',
+  'model.refresh': '刷新状态', 'model.serviceStatus': '服务状态', 'model.savedSummary': 'Host 已保存摘要',
+  'model.diagnostics': '查看诊断', 'model.diagnosticTitle': '本地模型诊断', 'model.noDiagnostics': '暂无诊断信息',
   'telemetry.title': '共享匿名使用统计',
   'telemetry.summary': '帮助我们了解隐私检测功能的使用情况。',
   'telemetry.consent': '共享匿名使用统计',
@@ -414,7 +423,13 @@ export const en: Record<PrivacyKey, string> = {
   'model.loadLocal': 'Load local model',
   'model.localSelected': 'Selected',
   'model.localMetadata': 'Model information',
-  'model.localRuntimeNotice': 'The browser never reads model files or connects to vLLM. Sending stays blocked if the Host service is not ready, inference fails, or output is invalid. Host configuration UI follows in a later phase.',
+  'model.localRuntimeNotice': 'The browser never reads model files or connects to vLLM. Sending stays blocked if the Host service is not ready, inference fails, or output is invalid.',
+  'model.condaExecutable': 'Conda executable', 'model.condaEnvironment': 'Conda environment', 'model.environmentKind': 'Environment selector',
+  'model.environmentName': 'Environment name', 'model.environmentPrefix': 'Environment prefix', 'model.modelDirectory': 'Model directory',
+  'model.gpuMemory': 'GPU memory ratio', 'model.maxLength': 'Maximum context', 'model.dtype': 'Data type', 'model.tensorParallel': 'Parallel GPUs',
+  'model.autoStart': 'Auto-start after save', 'model.applyStart': 'Apply and start', 'model.stop': 'Stop', 'model.restart': 'Restart',
+  'model.refresh': 'Refresh status', 'model.serviceStatus': 'Service status', 'model.savedSummary': 'Saved Host summary',
+  'model.diagnostics': 'View diagnostics', 'model.diagnosticTitle': 'Local model diagnostics', 'model.noDiagnostics': 'No diagnostics available',
   'telemetry.title': 'Share anonymous usage statistics',
   'telemetry.summary': 'Help us understand how privacy detection is used.',
   'telemetry.consent': 'Share anonymous usage metrics',

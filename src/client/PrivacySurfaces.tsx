@@ -803,9 +803,55 @@ function RulesView({ controller, snapshot, t }: {
   )
 }
 
-function LocalModelActions({ t, state }: { t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
+function LocalModelActions({ controller, snapshot, t, state }: { controller: PrivacyController; snapshot: PrivacySnapshot; t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
+  const saved = snapshot.localVllmConfig
+  const [conda, setConda] = useState('')
+  const [environment, setEnvironment] = useState('vllm')
+  const [environmentKind, setEnvironmentKind] = useState<'name' | 'prefix'>('name')
+  const [model, setModel] = useState('')
+  const [gpu, setGpu] = useState(0.72)
+  const [maxLength, setMaxLength] = useState(8192)
+  const [dtype, setDtype] = useState<'auto' | 'bfloat16' | 'float16'>('auto')
+  const [tensorParallel, setTensorParallel] = useState(1)
+  const [autoStart, setAutoStart] = useState(true)
+  const busy = state.status === 'loading' || state.inferenceStatus === 'running'
+  const apply = (): void => {
+    void controller.configureLocalVllm({
+      condaExecutable: conda, condaEnvironment: { kind: environmentKind, value: environment },
+      modelDirectory: model, gpuMemoryUtilization: gpu, maxModelLength: maxLength,
+      dtype, tensorParallelSize: tensorParallel, autoStart,
+    })
+  }
   return <div className={`${css.modelActions} ${css.localModelActions}`}>
+    <div className={css.localModelGrid}>
+      <label><span>{t('model.condaExecutable')}</span><input value={conda} placeholder={saved?.condaExecutable ?? '/opt/conda/bin/conda'} onChange={event => { setConda(event.target.value) }} /></label>
+      <label><span>{t('model.environmentKind')}</span><select value={environmentKind} onChange={event => { setEnvironmentKind(event.target.value as 'name' | 'prefix') }}><option value="name">{t('model.environmentName')}</option><option value="prefix">{t('model.environmentPrefix')}</option></select></label>
+      <label><span>{t('model.condaEnvironment')}</span><input value={environment} placeholder={saved?.condaEnvironment?.value} onChange={event => { setEnvironment(event.target.value) }} /></label>
+      <label><span>{t('model.modelDirectory')}</span><input value={model} placeholder={saved?.modelDirectory ?? '/models/Qwen3.5-0.8B-pii-v2-merged'} onChange={event => { setModel(event.target.value) }} /></label>
+      <label><span>{t('model.gpuMemory')}</span><input type="number" min="0.1" max="0.95" step="0.01" value={gpu} onChange={event => { setGpu(Number(event.target.value)) }} /></label>
+      <label><span>{t('model.maxLength')}</span><input type="number" min="512" max="32768" step="1" value={maxLength} onChange={event => { setMaxLength(Number(event.target.value)) }} /></label>
+      <label><span>{t('model.dtype')}</span><select value={dtype} onChange={event => { setDtype(event.target.value as typeof dtype) }}><option value="auto">auto</option><option value="bfloat16">bfloat16</option><option value="float16">float16</option></select></label>
+      <label><span>{t('model.tensorParallel')}</span><input type="number" min="1" max="16" step="1" value={tensorParallel} onChange={event => { setTensorParallel(Number(event.target.value)) }} /></label>
+    </div>
+    <label className={css.localModelSwitch}><SwitchControl checked={autoStart} label={t('model.autoStart')} onChange={setAutoStart} /><span>{t('model.autoStart')}</span></label>
+    <div className={css.localModelButtons}>
+      <button className={css.primaryButton} type="button" disabled={busy || conda === '' || model === ''} onClick={apply}>{t('model.applyStart')}</button>
+      <button className={css.secondaryButton} type="button" disabled={busy} onClick={() => { void controller.stopLocalVllm() }}>{t('model.stop')}</button>
+      <button className={css.secondaryButton} type="button" disabled={busy || saved?.configured !== true} onClick={() => { void controller.restartLocalVllm() }}>{t('model.restart')}</button>
+      <button className={css.secondaryButton} type="button" disabled={busy || snapshot.localVllmStatus?.status !== 'ready'} onClick={() => { void controller.testLocalVllm() }}>{t('model.test')}</button>
+      <button className={css.secondaryButton} type="button" disabled={busy} onClick={() => { void controller.refreshLocalVllm() }}>{t('model.refresh')}</button>
+      <button className={css.secondaryButton} type="button" disabled={busy} onClick={() => { void controller.refreshLocalVllmDiagnostics() }}>{t('model.diagnostics')}</button>
+    </div>
+    <small>{`${t('model.serviceStatus')}: ${snapshot.localVllmStatus?.status ?? 'unconfigured'} · ${snapshot.localVllmStatus?.modelDirectory ?? saved?.modelDirectory ?? '-'}`}</small>
     {state.error !== undefined ? <code>{state.code === undefined ? state.error : `${state.code}: ${state.error}`}</code> : null}
+    {snapshot.localVllmDiagnostics === undefined ? null : <details className={css.localModelDiagnostics} open={state.status === 'error'}>
+      <summary>{t('model.diagnosticTitle')}</summary>
+      {snapshot.localVllmDiagnostics.diagnostic === undefined
+        ? <small>{t('model.noDiagnostics')}</small>
+        : <code>{`${snapshot.localVllmDiagnostics.diagnostic.stage}/${snapshot.localVllmDiagnostics.diagnostic.code}: ${snapshot.localVllmDiagnostics.diagnostic.message}`}</code>}
+      {snapshot.localVllmDiagnostics.logs.length === 0 ? null
+        : <pre>{snapshot.localVllmDiagnostics.logs.join('\n')}</pre>}
+    </details>}
     <small>{t('model.localRuntimeNotice')}</small>
   </div>
 }
@@ -884,7 +930,7 @@ function ModelView({ controller, snapshot, t }: {
           ))}
         </div>
       </section>
-      {snapshot.detectorMode === 'local-model' ? <LocalModelActions t={t} state={localModelState} /> : null}
+      {snapshot.detectorMode === 'local-model' ? <LocalModelActions controller={controller} snapshot={snapshot} t={t} state={localModelState} /> : null}
       {snapshot.detectorMode === 'embedded' ? (
         <div className={css.modelActions}>
           <button

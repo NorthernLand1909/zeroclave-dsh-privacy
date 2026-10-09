@@ -116,6 +116,47 @@ export interface DetectorRuntimeState {
   inferenceStatus?: 'idle' | 'running' | 'error' | 'partial'
 }
 
+export interface LocalVllmConfigInput {
+  condaExecutable: string
+  condaEnvironment: { kind: 'name' | 'prefix'; value: string }
+  modelDirectory: string
+  gpuMemoryUtilization: number
+  maxModelLength: number
+  dtype: 'auto' | 'bfloat16' | 'float16'
+  tensorParallelSize: number
+  autoStart: boolean
+}
+
+export interface LocalVllmSavedConfig {
+  configured: boolean
+  condaExecutable?: string
+  condaEnvironment?: { kind: 'name' | 'prefix'; value: string }
+  modelDirectory?: string
+  gpuMemoryUtilization?: number
+  maxModelLength?: number
+  dtype?: 'auto' | 'bfloat16' | 'float16'
+  tensorParallelSize?: number
+  autoStart?: boolean
+}
+
+export interface LocalVllmPublicStatus {
+  status: 'stopped' | 'starting' | 'health_checking' | 'warming' | 'ready' | 'running' | 'stopping' | 'startup_error' | 'warmup_error' | 'crashed'
+  generation: number
+  modelName: string
+  modelDirectory?: string
+  startedAt?: string
+  readyAt?: string
+  error?: { code: string; message: string }
+}
+
+export interface LocalVllmDiagnostics {
+  status: LocalVllmPublicStatus['status']
+  generation: number
+  error?: { code: string; message: string }
+  diagnostic?: { stage: 'startup' | 'health' | 'warmup' | 'runtime'; code: string; message: string }
+  logs: readonly string[]
+}
+
 export interface TelemetryRuntimeState {
   consent: boolean
   availability: 'checking' | 'available' | 'unavailable'
@@ -160,6 +201,9 @@ export interface PrivacySnapshot {
   detectorMode: DetectorMode
   detectorStates: Readonly<Record<DetectorMode, DetectorRuntimeState>>
   localModel?: LocalModelMetadata
+  localVllmConfig?: LocalVllmSavedConfig
+  localVllmStatus?: LocalVllmPublicStatus
+  localVllmDiagnostics?: LocalVllmDiagnostics
   liveBySession: ReadonlyMap<string, PrivacyLiveState>
   regexRules: readonly EditableRegexRule[]
   regexRevision: number

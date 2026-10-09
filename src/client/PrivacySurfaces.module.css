@@ -1745,6 +1745,63 @@
   font-style: normal;
 }
 
+.localModelGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.localModelGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.localModelGrid input,
+.localModelGrid select {
+  min-width: 0;
+}
+
+.localModelSwitch,
+.localModelButtons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.localModelButtons {
+  flex-wrap: wrap;
+}
+
+.localModelDiagnostics {
+  min-width: 0;
+}
+
+.localModelDiagnostics summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.localModelDiagnostics code,
+.localModelDiagnostics pre {
+  display: block;
+  margin-top: 8px;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-l1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.localModelDiagnostics pre {
+  max-height: 240px;
+}
+
 .drawerFooter {
   display: flex;
   flex-direction: column;
@@ -1853,6 +1910,10 @@
   }
 
   .modelActions {
+    grid-template-columns: 1fr;
+  }
+
+  .localModelGrid {
     grid-template-columns: 1fr;
   }
 

@@ -20,7 +20,7 @@
 
 ## ✨ 为什么使用 ZeroClave
 
-| 🧭 先看再发 | 🔐 默认不改草稿 | 🧩 三种检测器 |
+| 🧭 先看再发 | 🔐 默认不改草稿 | 🧩 多种检测器 |
 | --- | --- | --- |
 | 发送前查看当前输入、敏感实体和脱敏输出 | 原文留在 composer，只有确认后的内容发送给模型 | 本地正则、浏览器本地 BERT、ZeroClave Gateway |
 
@@ -52,13 +52,17 @@
 | 本地正则 | 浏览器 | 不联网 | 结构化字段、密钥、合同编号、账号、邮箱、电话等 |
 | 浏览器本地 BERT | 浏览器 WebAssembly | 首次使用下载模型文件；不会上传消息文本 | 英文自然语言补充检测 |
 | ZeroClave API | DSH Host + ZeroClave Gateway | 浏览器只请求同源 DSH Host，由 Host 转发 HTTPS 请求 | 增强实体识别，适合需要网关检测的部署 |
-| 自定义本地模型（开发中） | DSH Host + 本机 vLLM | Host 只经 `127.0.0.1` 调用受监管子进程；原文会进入本机 Host 和 vLLM | Qwen3.5 Transformers 本机目录 |
+| 自定义本地模型 | DSH Host + 本机 vLLM | Host 只经 `127.0.0.1` 调用受监管子进程；原文会进入本机 Host 和 vLLM | Qwen3.5 Transformers 本机目录 |
 
 本地正则无需下载，适合中文合同中的结构化字段。BERT 模型主要面向英文；中文合同建议以本地正则为主。BERT 不可用时可以在设置中明确切换到本地正则，不会默认为安全。
 
 ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。需要回退时，请在“检测设置”中手动选择“本地正则”。插件不会把 ZeroClave 失败静默解释为安全。
 
-自定义本地模型正在迁移到本机 vLLM 路线。通过 Host 配置启用 auto-start 后，Host 使用 argv 数组和 `shell: false` 调用指定 Conda 环境，强制 vLLM 绑定 `127.0.0.1`，并为每次启动生成仅保存在 Host 内存中的鉴权 token。服务依次通过健康检查、鉴权检查、模型名称检查和固定合成 PII 预热后才进入 `ready`；DSH 生命周期结束时会终止受监管进程。此路线不会把模型权重交给浏览器，但待检测原文会进入本机 DSH Host 和本机 vLLM。阶段 6–7 的完整发送链路和设置界面完成前，该检测器仍保持开发中状态。
+自定义本地模型采用本机 vLLM 路线。可在“检测设置”填写 Conda executable、环境名或前缀、模型目录、GPU 显存比例、最大上下文、dtype、tensor parallel 和 auto-start。Host 使用 argv 数组和 `shell: false` 调用指定 Conda 环境，强制 vLLM 绑定 `127.0.0.1`，并为每次启动生成仅保存在 Host 内存中的鉴权 token。服务依次通过健康检查、鉴权检查、模型名称检查和固定合成 PII 预热后才进入 `ready`；DSH 生命周期结束时会终止受监管进程。此路线不会把模型权重交给浏览器，但待检测原文会进入本机 DSH Host 和本机 vLLM。
+
+本地模型使用固定 system prompt 和模型 chat template，执行“正则 → vLLM → 合并结果”。模型输出必须是完整、严格的 JSON，并通过实体类型、UTF-16/codepoint offset、原文片段、置信度和响应大小校验。超时、截断、partial、非法输出、服务未 ready 或进程崩溃都会阻止发送，不会退回为仅正则放行；草稿仍保留在 composer。
+
+启动或预热失败时，设置页的“查看诊断”会读取 Host 保存的安全诊断码和最近 80 行脱敏日志。诊断会隐藏鉴权 token、内部端口、完整 Conda/模型/用户路径、请求正文和 traceback 文件位置；不会返回原始模型 completion。它可用于区分 HTTP 错误、超时、截断、非法 JSON、协议字段错误以及预期合成实体或 offset 不匹配。
 
 阶段 5 的 Host 接口位于 `/api/zeroclave-privacy/local-model/*`，包含配置摘要、状态、启动、停止、合成测试和检测端点。所有端点先经过 DSH Connection 的 Host/Origin 防护与浏览器会话认证；Host 内部只调用当前 Supervisor 持有的 `127.0.0.1` vLLM capability。响应不包含随机 token、内部端口、PID、完整路径或原始 stderr。检测调用限制为单并发和一个等待槽，并限制请求时间与响应大小。
 
@@ -248,7 +252,7 @@ pnpm dsh web --no-open
 - ZeroClave 不是 E2EE 通道；网关和 DSH Host 在检测阶段可见原文。
 - 直接 Host API、自动化脚本和 composer 之外的发送路径不在浏览器适配器的完整保护范围内。
 - 本地恢复映射不跨浏览器、设备或 origin 同步。
-- 本机 vLLM Supervisor、健康检查、合成 PII 预热、自动启动和进程回收已经实现；同源管理 API、完整检测调用和前端配置界面仍属于后续阶段，因此当前还不能通过 UI 使用该路线。
+- 本机 vLLM 目前只支持经过预检的 Qwen3.5 本地目录与 NVIDIA/CUDA 环境；不会静默回退到 CPU、远程模型或仅正则检测。
 - 自定义规则使用 JavaScript 正则语法，当前没有 RE2 导入/导出功能。
 - 浏览器历史、搜索和非 Chat 视图可能只保留 Host 侧的脱敏表示。
 

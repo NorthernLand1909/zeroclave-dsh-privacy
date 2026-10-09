@@ -11,6 +11,7 @@ export const LOCAL_VLLM_API_BASE = '/api/zeroclave-privacy/local-model'
 export const LOCAL_VLLM_API_PATHS = {
   config: `${LOCAL_VLLM_API_BASE}/config`,
   status: `${LOCAL_VLLM_API_BASE}/status`,
+  diagnostics: `${LOCAL_VLLM_API_BASE}/diagnostics`,
   start: `${LOCAL_VLLM_API_BASE}/start`,
   stop: `${LOCAL_VLLM_API_BASE}/stop`,
   test: `${LOCAL_VLLM_API_BASE}/test`,
@@ -137,6 +138,7 @@ export class LocalVllmHostApi {
     try {
       if (path === LOCAL_VLLM_API_PATHS.config && request.method === 'GET') return json(200, configSummary(this.config))
       if (path === LOCAL_VLLM_API_PATHS.status && request.method === 'GET') return json(200, this.publicStatus())
+      if (path === LOCAL_VLLM_API_PATHS.diagnostics && request.method === 'GET') return json(200, this.publicDiagnostics())
       if (path === LOCAL_VLLM_API_PATHS.config && request.method === 'PUT') {
         let next: ValidatedLocalVllmConfig
         try { next = parseConfig(await requestJson(request)) } catch (error) {
@@ -171,7 +173,7 @@ export class LocalVllmHostApi {
         return json(200, { complete: true, findings })
       }
       const allow = path === LOCAL_VLLM_API_PATHS.config ? 'GET, PUT'
-        : path === LOCAL_VLLM_API_PATHS.status ? 'GET' : 'POST'
+        : path === LOCAL_VLLM_API_PATHS.status || path === LOCAL_VLLM_API_PATHS.diagnostics ? 'GET' : 'POST'
       return failure(405, 'method_not_allowed', 'HTTP method is not allowed', { allow })
     } catch (error) {
       if (error instanceof TypeError) return failure(415, 'unsupported_media_type', error.message)
@@ -181,6 +183,7 @@ export class LocalVllmHostApi {
       }
       if (error instanceof LocalVllmSupervisorError) {
         const status = error.code === 'not_ready' || error.code === 'busy' ? 409
+          : error.code === 'input_too_long' ? 413
           : error.code === 'inference_timeout' ? 504 : 502
         return failure(status, error.code, error.message)
       }
@@ -199,6 +202,17 @@ export class LocalVllmHostApi {
       ...(state.readyAt === undefined ? {} : { readyAt: state.readyAt }),
       ...(state.error === undefined ? {} : { error: state.error }),
       modelDirectory: this.config === undefined ? undefined : basename(this.config.modelDirectory),
+    }
+  }
+
+  private publicDiagnostics(): unknown {
+    const state = this.supervisor.snapshot()
+    return {
+      status: state.status,
+      generation: state.generation,
+      ...(state.error === undefined ? {} : { error: state.error }),
+      ...(state.diagnostic === undefined ? {} : { diagnostic: state.diagnostic }),
+      logs: state.logs,
     }
   }
 }

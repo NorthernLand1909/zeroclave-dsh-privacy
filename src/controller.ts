@@ -8,11 +8,13 @@ import {
 import type { RegexExecutor } from './regex-rules.ts'
 import { ZeroClaveDetectError, ZeroClaveDetector } from './zeroclave-detector.ts'
 import { LocalModelDetector, LocalModelError } from './local-model.ts'
+import { HostLocalModelDetector } from './host-local-model.ts'
 import { PrivacyTelemetry } from './telemetry.ts'
 import type { TelemetryDetector, TelemetryEvent, TelemetryReporter } from './telemetry.ts'
 import type {
   DetectorMode, DetectorRuntimeState, PrivacySnapshot, RiskLevel, ScanResult, EditableRegexRule, SendPolicy,
   PrivacyFinding, LocalModelMetadata,
+  LocalVllmConfigInput,
 } from './types.ts'
 
 const ENABLED_STORAGE_KEY = 'zeroclave.privacy.enabled'
@@ -106,7 +108,7 @@ export class PrivacyController {
     private readonly executeRegex: RegexExecutor = runRegexWorker,
     private readonly zeroclave = new ZeroClaveDetector(),
     private readonly telemetryReporter: TelemetryReporter = new PrivacyTelemetry(),
-    localModel = new LocalModelDetector(),
+    localModel: LocalModelDetector | HostLocalModelDetector = new LocalModelDetector(),
   ) {
     this.localModel = localModel
     this.localModel.setRuntimeEventListener((event) => {
@@ -123,7 +125,7 @@ export class PrivacyController {
     } }
   }
   private readonly embedded = new EmbeddedModelDetector()
-  private readonly localModel: LocalModelDetector
+  private readonly localModel: LocalModelDetector | HostLocalModelDetector
   private readonly storedRules = loadRegexRules()
   private settingsError = this.storedRules.error
   private readonly lifetime = new AbortController()
@@ -346,6 +348,7 @@ export class PrivacyController {
     // result before the new model can become selectable.
     this.cancelActiveOperations()
     try {
+      if (!(this.localModel instanceof LocalModelDetector)) throw new LocalModelError('runtime_unavailable', 'Browser model import has been removed')
       const metadata = await this.localModel.select(modelFile, manifestFile)
       this.update({ ...this.snapshot, localModel: metadata, detectorStates: {
         ...this.snapshot.detectorStates, 'local-model': { status: 'idle' },
@@ -368,6 +371,7 @@ export class PrivacyController {
   async selectLocalModelDirectory(files: readonly (Blob & { name?: string; webkitRelativePath?: string })[]): Promise<LocalModelMetadata> {
     this.cancelActiveOperations()
     try {
+      if (!(this.localModel instanceof LocalModelDetector)) throw new LocalModelError('runtime_unavailable', 'Browser model import has been removed')
       const metadata = await this.localModel.selectDirectory(files)
       this.update({ ...this.snapshot, localModel: metadata, detectorStates: {
         ...this.snapshot.detectorStates, 'local-model': { status: 'idle' },
@@ -388,6 +392,7 @@ export class PrivacyController {
   async loadLocalModel(): Promise<void> {
     this.setDetectorState('local-model', { status: 'loading', progress: 0 })
     try {
+      if (!(this.localModel instanceof LocalModelDetector)) throw new LocalModelError('runtime_unavailable', 'Use the Host vLLM controls')
       await this.localModel.load(progress => { this.setDetectorState('local-model', { status: 'loading', progress }) }, this.lifetime.signal)
       this.setDetectorState('local-model', { status: 'ready', progress: 100, inferenceStatus: 'idle' })
     } catch (error) {
@@ -402,6 +407,63 @@ export class PrivacyController {
       await this.localModel.unload()
     } finally {
       this.clearLocalModelSnapshot()
+    }
+  }
+
+  async refreshLocalVllm(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    try {
+      const { config, status } = await this.localModel.refresh(this.lifetime.signal)
+      this.update({ ...this.snapshot, localVllmConfig: config, localVllmStatus: status,
+        detectorStates: { ...this.snapshot.detectorStates, 'local-model': this.localVllmState(status) } })
+    } catch (error) {
+      this.setLocalModelError(error)
+    }
+  }
+
+  async configureLocalVllm(config: LocalVllmConfigInput): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    this.setDetectorState('local-model', { status: 'loading' })
+    try { await this.localModel.configure(config, this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
+      this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
+    }
+  }
+
+  async startLocalVllm(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    this.setDetectorState('local-model', { status: 'loading' })
+    try { await this.localModel.start(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
+      this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
+    }
+  }
+
+  async stopLocalVllm(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    this.cancelActiveOperations()
+    try { await this.localModel.stop(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) { this.setLocalModelError(error) }
+  }
+
+  async restartLocalVllm(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    this.cancelActiveOperations(); this.setDetectorState('local-model', { status: 'loading' })
+    try { await this.localModel.restart(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
+      this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
+    }
+  }
+
+  async testLocalVllm(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    this.setDetectorState('local-model', { status: 'loading' })
+    try { await this.localModel.test(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) { this.setLocalModelError(error) }
+  }
+
+  async refreshLocalVllmDiagnostics(): Promise<void> {
+    if (!(this.localModel instanceof HostLocalModelDetector)) return
+    try {
+      const diagnostics = await this.localModel.diagnostics(this.lifetime.signal)
+      this.update({ ...this.snapshot, localVllmDiagnostics: diagnostics })
+    } catch {
+      // Diagnostics are best-effort and must not replace the actionable startup error.
     }
   }
 
@@ -872,6 +934,17 @@ export class PrivacyController {
       error: error instanceof Error ? error.message : String(error),
       ...(duringInference ? { inferenceStatus: code === 'partial_result' ? 'partial' as const : 'error' as const } : {}),
     })
+  }
+
+  private localVllmState(status: import('./types.ts').LocalVllmPublicStatus): DetectorRuntimeState {
+    if (status.status === 'ready') return { status: 'ready', inferenceStatus: 'idle' }
+    if (status.status === 'running') return { status: 'ready', inferenceStatus: 'running' }
+    if (status.status === 'starting' || status.status === 'health_checking' || status.status === 'warming' || status.status === 'stopping') return { status: 'loading' }
+    if (status.status === 'stopped') return { status: status.modelDirectory === undefined ? 'unconfigured' : 'idle' }
+    return {
+      status: 'error', error: status.error?.message ?? 'Local model service failed',
+      ...(status.error?.code === undefined ? {} : { code: status.error.code }),
+    }
   }
 
   private setDetectorState(mode: DetectorMode, state: DetectorRuntimeState): void {

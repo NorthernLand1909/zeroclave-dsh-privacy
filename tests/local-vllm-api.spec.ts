@@ -25,6 +25,27 @@ function fakeSupervisor() {
 }
 
 describe('local vLLM same-origin API', () => {
+  it('returns bounded sanitized diagnostics without runtime capabilities', async () => {
+    const supervisor = fakeSupervisor()
+    supervisor.snapshot.mockReturnValue({
+      status: 'warmup_error', generation: 3, modelName: 'zeroclave-local-pii',
+      error: { code: 'warmup_failed', message: 'Warmup failed' },
+      diagnostic: { stage: 'warmup', code: 'protocol_invalid_json', message: 'Strict JSON was not returned.' },
+      logs: ['INFO model loaded', 'ERROR completion rejected'],
+    })
+    const api = new LocalVllmHostApi(supervisor as unknown as LocalVllmSupervisor, config())
+    const response = await api.fetch(LOCAL_VLLM_API_PATHS.diagnostics, new Request('http://localhost/api'))
+    const text = await response.text()
+    expect(response.status).toBe(200)
+    expect(JSON.parse(text)).toMatchObject({
+      status: 'warmup_error', diagnostic: { stage: 'warmup', code: 'protocol_invalid_json' },
+      logs: ['INFO model loaded', 'ERROR completion rejected'],
+    })
+    expect(text).not.toContain('/mnt/c')
+    expect(text).not.toContain('token')
+    expect(text).not.toContain('port')
+  })
+
   it('returns only a redacted configuration summary and never exposes paths or capabilities', async () => {
     const supervisor = fakeSupervisor()
     const api = new LocalVllmHostApi(supervisor as unknown as LocalVllmSupervisor, config())
