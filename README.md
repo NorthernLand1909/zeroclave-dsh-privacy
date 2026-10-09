@@ -198,6 +198,23 @@ pnpm --filter '@zeroclave/dsh-privacy' run bundle
 pnpm --filter '@zeroclave/dsh-privacy' test
 ```
 
+### 本机 vLLM 端到端测试
+
+`tests/local-vllm.integration.spec.ts` 是一个特殊的、默认跳过的集成测试。它会启动真实的本机 vLLM，发送检测请求，根据模型返回的实体构建脱敏 mask，再把脱敏文本发送到测试 HTTP 接收端；因此需要 GPU、vLLM 环境和已经准备好的模型目录。模型路径、Conda 路径和运行参数只从外部环境变量读取，不会写入源码或 Git。
+
+在匹配的 Harness 根目录配置环境后运行：
+
+```bash
+export ZC_LOCAL_VLLM_MODEL_DIR=/absolute/path/to/model
+export ZC_LOCAL_VLLM_CONDA_EXECUTABLE=/absolute/path/to/conda
+export ZC_LOCAL_VLLM_CONDA_ENV=vllm
+pnpm exec vitest run packages/experimental/zeroclave-privacy/tests/local-vllm.integration.spec.ts
+```
+
+可选变量包括 `ZC_LOCAL_VLLM_GPU_MEMORY_UTILIZATION`、`ZC_LOCAL_VLLM_MAX_MODEL_LENGTH`、`ZC_LOCAL_VLLM_DTYPE`、`ZC_LOCAL_VLLM_TENSOR_PARALLEL_SIZE`、`ZC_LOCAL_VLLM_TEST_TEXT` 和 `ZC_LOCAL_VLLM_TEST_TIMEOUT_MS`。未同时设置模型目录和 Conda executable 时，该测试会显示为 skipped，属于预期行为；普通单元测试不受影响。
+
+`released-harness.spec.ts` 也可能显示一个 skipped。它只在 `node_modules/.pnpm` 中存在精确版本 `@deepseek-ai/dsh-client-ui-conversation@0.1.1-rc.2` 时运行，用于验证已发布的旧版 Harness browser artifact。没有安装该 released Harness 时无需处理，也不应为了消除 skipped 而修改固定 Harness revision 或锁文件。
+
 阶段 8/9 的本机 vLLM 环境和 smoke 结果记录在 [`docs/local-vllm-runtime.md`](docs/local-vllm-runtime.md)。发布前还必须在目标 Windows 11 + WSL2 + NVIDIA 机器完成 20 次启停无残留测试；单次 smoke 结果不替代该验收。
 
 生成 npm/DSH 命令行安装包：
