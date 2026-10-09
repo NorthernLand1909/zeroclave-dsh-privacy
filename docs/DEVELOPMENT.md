@@ -121,12 +121,10 @@ zeroclave-dsh-privacy/
 
 | 触发方式 | 结果 |
 | --- | --- |
-| Pull Request | 类型检查、构建、单元与集成测试、安装包审计 |
-| 推送 `main` 或 `alpha` | 上述检查，以及可下载的 Actions artifacts |
-| 手动运行 workflow | 上述检查，以及可下载的 Actions artifacts |
-| 推送 `v*` 标签 | 检查通过后创建 GitHub Release 并附带安装包 |
+| 手动运行 workflow | 类型检查、构建、单元与集成测试、安装包审计，以及可下载的 Actions artifacts |
+| 推送 `v*` 标签 | 自动执行上述检查；通过后创建 GitHub Release 并附带安装包 |
 
-Artifacts 包含 `.tgz`、`.zip` 和 SHA-256 校验文件，保留 7 天。普通分支推送不会创建 Release。
+Artifacts 包含 `.tgz`、`.zip` 和 SHA-256 校验文件，保留 7 天。普通分支推送和 Pull Request 不会自动运行 CI；日常验证请在 GitHub Actions 页面手动运行 workflow。普通分支推送不会创建 Release。
 
 发布前确认 `package.json` 与 `plugin.json` 版本一致。发布 alpha.27 的标签命令：
 
