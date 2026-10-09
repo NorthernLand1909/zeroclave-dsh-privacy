@@ -1,5 +1,11 @@
 node_modules/
-lib/
+lib/*
+!lib/index.js
+!lib/client.js
+!lib/types/
+lib/types/**/*
+!lib/types/**/
+!lib/types/**/*.d.ts
 *.tgz
 *.tsbuildinfo
 .DS_Store

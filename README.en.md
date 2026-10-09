@@ -50,7 +50,7 @@ Open **Plugins → Add Plugin**. Paste the `.tgz` file's **absolute path** into 
 
 You do not need to upload a local package to GitHub first. To upgrade an existing installation, uninstall the old version before installing the new one. When using a remote web host, the path must refer to a file on the **host machine**.
 
-> This repository does not include the compiled `lib/` directory. Install a built package. The DSH input accepts a local path; it does not require a GitHub URL.
+> This repository includes the minimal compiled `lib/` runtime, so a GitHub source install can activate the plugin directly. For a reproducible desktop install, prefer the versioned `.tgz`; the `.zip` is intended for DeepSeek Stream marketplace uploads.
 
 ### 3. Turn on privacy detection
 
