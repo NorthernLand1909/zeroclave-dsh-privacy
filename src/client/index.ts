@@ -7,7 +7,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { PrivacyController } from '../controller.ts'
 import { LocalModelDetector } from '../local-model.ts'
-import { TransformersWebGpuRuntimeAdapter } from '../local-model-runtime.ts'
 import { installSendRedaction } from '../send.ts'
 import { installDisplayRestoration } from './display.tsx'
 import { FooterButton, HeaderButton, PrivacyDock, PrivacyDrawer } from './PrivacySurfaces.tsx'
@@ -21,19 +20,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 export const inject = ['slots', 'locale', 'conversation', 'sessions']
 
-function localModelWorkerUrl(): URL {
-  const currentScript = typeof document !== 'undefined' ? document.currentScript : null
-  const source = currentScript instanceof HTMLScriptElement ? currentScript.src : undefined
-  const base = source ?? (typeof location !== 'undefined' ? location.href : 'http://localhost/')
-  return new URL('./local-model-worker.js', base)
-}
-
 export function apply(ctx: ClientContext): void {
   const controller = new PrivacyController(
     undefined, undefined, undefined, undefined,
-    new LocalModelDetector(new TransformersWebGpuRuntimeAdapter({
-      workerUrl: localModelWorkerUrl(),
-    })),
+    new LocalModelDetector(),
   )
   void controller.initializeTelemetry()
   ctx.effect(() => () => { void controller.dispose() }, 'zeroclave-privacy: controller')

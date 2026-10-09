@@ -372,52 +372,6 @@ export class UnavailableModelRuntimeAdapter implements ModelRuntimeAdapter {
 }
 
 
-interface RuntimeWorker {
-  postMessage(message: unknown, transfer?: Transferable[]): void
-  terminate(): void
-  addEventListener(type: 'message' | 'error', listener: (event: MessageEvent | ErrorEvent) => void): void
-  removeEventListener(type: 'message' | 'error', listener: (event: MessageEvent | ErrorEvent) => void): void
-}
-
-/** Thin RPC adapter; the worker owns tokenizer, prompt construction and WebGPU state. */
-export class WebWorkerModelRuntimeAdapter implements ModelRuntimeAdapter {
-  private worker: RuntimeWorker | undefined
-  private nextId = 0
-  constructor(private readonly createWorker: () => RuntimeWorker, private readonly workerUrl: string | URL) {}
-  async load(model: ValidatedLocalModel, onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<void> {
-    this.worker?.terminate(); this.worker = this.createWorker()
-    if (model.file === undefined) return Promise.reject(new LocalModelError('format_invalid', 'Worker runtime requires a model file'))
-    const bytes = await model.file.arrayBuffer()
-    await this.request('load', { url: String(this.workerUrl), model: bytes, manifest: model.manifest }, [bytes], onProgress, signal)
-  }
-  async scan(text: string, signal?: AbortSignal): Promise<readonly FindingCandidate[]> {
-    const value = await this.request('scan', { text }, [], undefined, signal)
-    if (!Array.isArray(value)) throw new LocalModelError('runtime_unavailable', 'Worker returned an invalid detection result')
-    return value as FindingCandidate[]
-  }
-  async unload(): Promise<void> { this.worker?.terminate(); this.worker = undefined }
-  private request(type: string, payload: Record<string, unknown>, transfer: Transferable[], onProgress?: (progress: number) => void, signal?: AbortSignal): Promise<unknown> {
-    const worker = this.worker
-    if (worker === undefined) return Promise.reject(new LocalModelError('runtime_unavailable', 'Worker is not initialized'))
-    const id = ++this.nextId
-    return new Promise((resolve, reject) => {
-      const cleanup = (): void => { worker.removeEventListener('message', onMessage); worker.removeEventListener('error', onError); signal?.removeEventListener('abort', onAbort) }
-      const onAbort = (): void => { cleanup(); reject(signal?.reason ?? new DOMException('Aborted', 'AbortError')) }
-      const onError = (event: MessageEvent | ErrorEvent): void => { cleanup(); reject(new LocalModelError('runtime_unavailable', event instanceof ErrorEvent ? event.message : 'Worker failed')) }
-      const onMessage = (event: MessageEvent | ErrorEvent): void => {
-        const data = 'data' in event ? event.data as { id?: number; type?: string; progress?: number; result?: unknown; error?: string } | undefined : undefined
-        if (data?.id !== id) return
-        if (data.type === 'progress') { if (typeof data.progress === 'number') onProgress?.(data.progress); return }
-        cleanup()
-        if (data.type === 'error') reject(new LocalModelError('runtime_unavailable', data.error ?? 'Worker request failed'))
-        else resolve(data.result)
-      }
-      worker.addEventListener('message', onMessage); worker.addEventListener('error', onError); signal?.addEventListener('abort', onAbort, { once: true })
-      worker.postMessage({ id, type, ...payload }, transfer)
-    })
-  }
-}
-
 export class LocalModelDetector implements DetectorProvider {
   readonly id = 'local-model' as const
   readonly label = 'Local Transformers model'

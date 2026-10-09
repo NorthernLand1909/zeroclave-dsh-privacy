@@ -3,71 +3,13 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { clientBundle } from '../../client/tsdown.client.ts'
 
-// The desktop importer can activate a local ZIP before pnpm has materialized
-// its dependency tree. Keep the Host entry self-contained for that path; the
-// schema library has no shared runtime identity and is safe to inline.
-const bundle = clientBundle('@zeroclave/dsh-privacy', ['lib/types/index.js'], {
-  lib: {
-    inputOptions: {
-      resolve: {
-        alias: {
-          '@deepseek-ai/cosmokit': fileURLToPath(new URL('../../../vendor/cosmokit/src/index.ts', import.meta.url)),
-          '@deepseek-ai/schemastery': fileURLToPath(new URL('../../../vendor/schemastery/src/index.ts', import.meta.url)),
-        },
-      },
-    },
-    deps: {
-      alwaysBundle: (specifier: string) => specifier === '@deepseek-ai/schemastery'
-        || specifier === '@deepseek-ai/cosmokit'
-        || (!specifier.startsWith('node:')
-          && specifier !== 'lucide'
-          && !specifier.startsWith('@deepseek-ai/')),
-      neverBundle: (specifier: string) => specifier === 'lucide'
-        || (specifier.startsWith('@deepseek-ai/')
-          && specifier !== '@deepseek-ai/schemastery'
-          && specifier !== '@deepseek-ai/cosmokit'),
-    },
-  },
-})
-const transformersRoot = realpathSync(fileURLToPath(new URL(
-  './node_modules/@huggingface/transformers',
-  import.meta.url,
-)))
+const bundle = clientBundle('@zeroclave/dsh-privacy', ['lib/types/index.js'])
+const transformersRoot = realpathSync(fileURLToPath(new URL('./node_modules/@huggingface/transformers', import.meta.url)))
 const transformersWeb = resolve(transformersRoot, 'dist/transformers.web.js')
-const wllamaRoot = realpathSync(fileURLToPath(new URL(
-  './node_modules/@wllama/wllama',
-  import.meta.url,
-)))
-const wllamaWeb = resolve(wllamaRoot, 'esm/index.js')
-const wllamaWasm = resolve(wllamaRoot, 'esm/wasm/wllama.wasm')
 const onnxRuntimeWeb = resolve(transformersRoot, '../../onnxruntime-web/dist/ort.min.mjs')
 const utilCryptoSource = fileURLToPath(new URL('../../util/crypto/src/index.ts', import.meta.url))
 const brandLogoSource = fileURLToPath(new URL('./src/client/assets/zeroclave-logo.png', import.meta.url))
 const BRAND_LOGO_VIRTUAL_ID = '\0zeroclave-brand-logo.mjs'
-const WLLAMA_WASM_VIRTUAL_ID = '\0zeroclave-wllama-wasm.mjs'
-
-const transformersWorker = {
-  name: '@zeroclave/dsh-privacy/transformers-worker',
-  entry: { 'local-model-worker': 'src/local-model-worker.ts' },
-  outDir: 'lib',
-  format: ['esm'] as const,
-  platform: 'browser',
-  target: 'es2024',
-  dts: false,
-  sourcemap: true,
-  clean: false,
-  deps: { alwaysBundle: () => true },
-  inputOptions: {
-    resolve: {
-      alias: {
-        '@huggingface/transformers': transformersWeb,
-        'onnxruntime-web': onnxRuntimeWeb,
-      },
-      conditionNames: ['browser', 'import', 'module', 'default'],
-    },
-  },
-  outputOptions: { entryFileNames: 'local-model-worker.js' },
-}
 
 export default ((options: Parameters<typeof bundle>[0]) => [...bundle(options).map((config) => {
   if (config.name !== '@zeroclave/dsh-privacy/client') return config
@@ -88,19 +30,6 @@ export default ((options: Parameters<typeof bundle>[0]) => [...bundle(options).m
         const value = `data:image/png;base64,${readFileSync(brandLogoSource).toString('base64')}`
         return `export default ${JSON.stringify(value)};`
       },
-    }, {
-      name: 'zeroclave-wllama-wasm-inline',
-      resolveId: {
-        order: 'pre' as const,
-        handler(source: string) {
-          return source === 'virtual:zeroclave-wllama-wasm' ? WLLAMA_WASM_VIRTUAL_ID : null
-        },
-      },
-      load(id: string) {
-        if (id !== WLLAMA_WASM_VIRTUAL_ID) return null
-        const value = `data:application/wasm;base64,${readFileSync(wllamaWasm).toString('base64')}`
-        return `export default ${JSON.stringify(value)}`
-      },
     }, ...(config.plugins ?? [])],
     define: {
       ...config.define,
@@ -111,13 +40,12 @@ export default ((options: Parameters<typeof bundle>[0]) => [...bundle(options).m
       resolve: {
         ...config.inputOptions?.resolve,
         alias: {
-          '@huggingface/transformers': transformersWeb,
-          '@wllama/wllama/esm/index.js': wllamaWeb,
           '@deepseek-ai/dsh-util-crypto': utilCryptoSource,
+          '@huggingface/transformers': transformersWeb,
           'onnxruntime-web': onnxRuntimeWeb,
         },
         conditionNames: ['browser', 'import', 'module', 'default'],
       },
     },
   }
-}), transformersWorker]) satisfies typeof bundle
+})]) satisfies typeof bundle

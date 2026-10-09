@@ -58,7 +58,9 @@
 
 ZeroClave 检测失败或返回不完整结果时不会被视为“没有敏感信息”，发送会被阻止。需要回退时，请在“检测设置”中手动选择“本地正则”。插件不会把 ZeroClave 失败静默解释为安全。
 
-自定义本地模型正在迁移到本机 vLLM 路线。通过 Host 配置启用 auto-start 后，Host 使用 argv 数组和 `shell: false` 调用指定 Conda 环境，强制 vLLM 绑定 `127.0.0.1`，并为每次启动生成仅保存在 Host 内存中的鉴权 token。服务依次通过健康检查、鉴权检查、模型名称检查和固定合成 PII 预热后才进入 `ready`；DSH 生命周期结束时会终止受监管进程。此路线不会把模型权重交给浏览器，但待检测原文会进入本机 DSH Host 和本机 vLLM。阶段 5–7 的同源 API、完整检测协议和设置界面完成前，该检测器仍保持开发中状态。
+自定义本地模型正在迁移到本机 vLLM 路线。通过 Host 配置启用 auto-start 后，Host 使用 argv 数组和 `shell: false` 调用指定 Conda 环境，强制 vLLM 绑定 `127.0.0.1`，并为每次启动生成仅保存在 Host 内存中的鉴权 token。服务依次通过健康检查、鉴权检查、模型名称检查和固定合成 PII 预热后才进入 `ready`；DSH 生命周期结束时会终止受监管进程。此路线不会把模型权重交给浏览器，但待检测原文会进入本机 DSH Host 和本机 vLLM。阶段 6–7 的完整发送链路和设置界面完成前，该检测器仍保持开发中状态。
+
+阶段 5 的 Host 接口位于 `/api/zeroclave-privacy/local-model/*`，包含配置摘要、状态、启动、停止、合成测试和检测端点。所有端点先经过 DSH Connection 的 Host/Origin 防护与浏览器会话认证；Host 内部只调用当前 Supervisor 持有的 `127.0.0.1` vLLM capability。响应不包含随机 token、内部端口、PID、完整路径或原始 stderr。检测调用限制为单并发和一个等待槽，并限制请求时间与响应大小。
 
 ### ZeroClave 网关边界
 

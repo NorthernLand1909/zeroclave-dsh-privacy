@@ -1,6 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { spawn as nodeSpawn, type SpawnOptionsWithoutStdio } from 'node:child_process'
 import { createServer } from 'node:net'
+import { buildQwenMessages, LocalModelProtocolError, modelOutputToCandidates, parseModelOutput } from './local-model-protocol.ts'
+import type { FindingCandidate } from './detector.ts'
+import type { EntityType } from './types.ts'
 
 export const LOCAL_VLLM_MODEL_NAME = 'zeroclave-local-pii'
 
@@ -11,7 +14,8 @@ export type LocalVllmStatus =
 
 export type LocalVllmErrorCode =
   | 'startup_timeout' | 'health_check_failed' | 'warmup_failed' | 'process_crashed'
-  | 'out_of_memory' | 'stop_failed'
+  | 'out_of_memory' | 'stop_failed' | 'not_ready' | 'inference_timeout'
+  | 'response_too_large' | 'output_invalid' | 'partial_result' | 'busy'
 
 export interface ValidatedLocalVllmConfig {
   condaExecutable: string
@@ -69,11 +73,21 @@ const DEFAULT_HEALTH_INTERVAL_MS = 500
 const DEFAULT_STOP_GRACE_MS = 10_000
 const HEALTH_REQUEST_TIMEOUT_MS = 2_000
 const WARMUP_REQUEST_TIMEOUT_MS = 60_000
+const INFERENCE_TIMEOUT_MS = 30_000
+const MAX_INFERENCE_RESPONSE_BYTES = 256 * 1024
 const MAX_LOG_LINES = 80
 const MAX_LOG_CHARS = 512
 const WARMUP_TEXT = 'Contact demo@example.com for the synthetic privacy test.'
 const WARMUP_START = WARMUP_TEXT.indexOf('demo@example.com')
 const WARMUP_END = WARMUP_START + 'demo@example.com'.length
+const ENTITY_TYPES: readonly EntityType[] = [
+  'AGE', 'EMAIL', 'PHONE', 'PERSON', 'ADDRESS', 'COORDINATE', 'HONORIFIC',
+  'ORGANIZATION', 'NATIONAL_ID', 'CREDIT_CODE', 'BANK_ACCOUNT', 'BANK_NAME',
+  'CONTRACT_ID', 'DATE_TIME', 'FINANCIAL', 'CREDIT_CARD', 'IBAN_CODE',
+  'IP_ADDRESS', 'IMEI', 'MAC_ADDRESS', 'NRP', 'URL', 'TITLE', 'PASSWORD',
+  'PRIVATE_KEY', 'API_KEY', 'US_DRIVER_LICENSE', 'US_ITIN', 'US_LICENSE_PLATE',
+  'US_PASSPORT', 'US_SSN', 'OTHER',
+]
 
 function defaultSpawn(command: string, args: readonly string[], options: SpawnOptionsWithoutStdio): ChildLike {
   return nodeSpawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] }) as unknown as ChildLike
@@ -114,6 +128,12 @@ function safeMessage(code: LocalVllmErrorCode): string {
     case 'process_crashed': return 'The local model service exited unexpectedly'
     case 'out_of_memory': return 'The local model service ran out of GPU memory'
     case 'stop_failed': return 'The local model service could not be stopped cleanly'
+    case 'not_ready': return 'The local model service is not ready'
+    case 'inference_timeout': return 'Local model inference timed out'
+    case 'response_too_large': return 'The local model response exceeded its size limit'
+    case 'output_invalid': return 'The local model returned an invalid result'
+    case 'partial_result': return 'The local model returned a partial result'
+    case 'busy': return 'The local model service is busy'
   }
 }
 
@@ -169,6 +189,8 @@ export class LocalVllmSupervisor {
   private operation: Promise<void> | undefined
   private stopping = false
   private stderrTail = ''
+  private inference: AbortController | undefined
+  private queued = 0
 
   constructor(internals: LocalVllmSupervisorInternals = {}) {
     this.spawn = internals.spawn ?? defaultSpawn
@@ -203,6 +225,7 @@ export class LocalVllmSupervisor {
   async stop(): Promise<void> {
     this.generation += 1
     this.stopping = true
+    this.inference?.abort(new LocalVllmSupervisorError('not_ready', safeMessage('not_ready')))
     const child = this.child
     this.child = undefined
     this.port = undefined
@@ -230,6 +253,70 @@ export class LocalVllmSupervisor {
 
   async dispose(): Promise<void> {
     await this.stop()
+  }
+
+  /** Execute one bounded inference through the current private loopback capability. */
+  async detect(text: string, signal?: AbortSignal): Promise<readonly FindingCandidate[]> {
+    if (this.state.status !== 'ready' || this.child === undefined) {
+      throw new LocalVllmSupervisorError('not_ready', safeMessage('not_ready'))
+    }
+    if (this.inference !== undefined) {
+      if (this.queued >= 1) throw new LocalVllmSupervisorError('busy', safeMessage('busy'))
+      this.queued += 1
+      try {
+        while (this.inference !== undefined) {
+          if (signal?.aborted === true) throw signal.reason
+          await delay(10)
+        }
+      } finally {
+        this.queued -= 1
+      }
+      if (this.state.status !== 'ready' || this.child === undefined) {
+        throw new LocalVllmSupervisorError('not_ready', safeMessage('not_ready'))
+      }
+    }
+    const owner = new AbortController()
+    this.inference = owner
+    this.setState('running')
+    const timeout = AbortSignal.timeout(INFERENCE_TIMEOUT_MS)
+    const combined = signal === undefined
+      ? AbortSignal.any([owner.signal, timeout])
+      : AbortSignal.any([owner.signal, timeout, signal])
+    try {
+      const messages = buildQwenMessages(text, {
+        chatTemplate: '',
+        systemPromptVersion: 'zeroclave.qwen3_5-pii.v1',
+        entityTypes: ENTITY_TYPES,
+        recommendedGeneration: { temperature: 0, topP: 1, maxTokens: 512 },
+        constrainedJson: false,
+      })
+      const response = await this.request('/v1/chat/completions', {
+        model: LOCAL_VLLM_MODEL_NAME,
+        messages: [{ role: 'system', content: messages.system }, { role: 'user', content: messages.user }],
+        temperature: 0,
+        top_p: 1,
+        max_tokens: 512,
+        stream: false,
+      }, true, INFERENCE_TIMEOUT_MS, combined)
+      if (!response.ok || response.url !== `http://127.0.0.1:${String(this.port)}/v1/chat/completions`) {
+        throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+      }
+      const body = await readBoundedJson(response, MAX_INFERENCE_RESPONSE_BYTES, combined)
+      const choice = completionChoice(body)
+      if (choice.finishReason !== 'stop') throw new LocalVllmSupervisorError('partial_result', safeMessage('partial_result'))
+      return modelOutputToCandidates(parseModelOutput(choice.content, text, ENTITY_TYPES))
+    } catch (error) {
+      if (error instanceof LocalVllmSupervisorError) throw error
+      if (error instanceof LocalModelProtocolError) {
+        const code = error.reason === 'partial' ? 'partial_result' : 'output_invalid'
+        throw new LocalVllmSupervisorError(code, safeMessage(code))
+      }
+      if (timeout.aborted) throw new LocalVllmSupervisorError('inference_timeout', safeMessage('inference_timeout'))
+      throw error
+    } finally {
+      if (this.inference === owner) this.inference = undefined
+      if (this.child !== undefined) this.setState('ready')
+    }
   }
 
   private async startInner(config: ValidatedLocalVllmConfig): Promise<void> {
@@ -354,7 +441,7 @@ export class LocalVllmSupervisor {
     }
   }
 
-  private async request(path: string, body?: unknown, authenticated = true, timeoutMs = HEALTH_REQUEST_TIMEOUT_MS): Promise<Response> {
+  private async request(path: string, body?: unknown, authenticated = true, timeoutMs = HEALTH_REQUEST_TIMEOUT_MS, signal?: AbortSignal): Promise<Response> {
     const port = this.port
     const token = this.apiToken
     if (port === undefined || token === undefined) throw new Error('Service is not running')
@@ -366,7 +453,7 @@ export class LocalVllmSupervisor {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: signal ?? AbortSignal.timeout(timeoutMs),
     })
   }
 
@@ -432,4 +519,46 @@ export class LocalVllmSupervisor {
     }
     child.kill(signal)
   }
+}
+
+async function readBoundedJson(response: Response, limit: number, signal: AbortSignal): Promise<unknown> {
+  const declared = response.headers.get('content-length')
+  if (declared !== null && /^\d+$/u.test(declared) && Number(declared) > limit) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new LocalVllmSupervisorError('response_too_large', safeMessage('response_too_large'))
+  }
+  if (response.body === null) throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  while (true) {
+    if (signal.aborted) { await reader.cancel().catch(() => undefined); throw signal.reason }
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > limit) {
+      await reader.cancel().catch(() => undefined)
+      throw new LocalVllmSupervisorError('response_too_large', safeMessage('response_too_large'))
+    }
+    chunks.push(value)
+  }
+  try { return JSON.parse(Buffer.concat(chunks, size).toString('utf8')) as unknown } catch {
+    throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  }
+}
+
+function completionChoice(value: unknown): { content: string; finishReason: unknown } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  }
+  const choices = (value as Record<string, unknown>).choices
+  if (!Array.isArray(choices) || choices.length !== 1) throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  const choice = choices[0]
+  if (typeof choice !== 'object' || choice === null || Array.isArray(choice)) throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  const record = choice as Record<string, unknown>
+  const message = record.message
+  if (typeof message !== 'object' || message === null || Array.isArray(message)) throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  const content = (message as Record<string, unknown>).content
+  if (typeof content !== 'string') throw new LocalVllmSupervisorError('output_invalid', safeMessage('output_invalid'))
+  return { content, finishReason: record.finish_reason }
 }

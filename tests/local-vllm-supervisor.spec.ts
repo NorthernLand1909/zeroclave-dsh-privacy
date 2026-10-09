@@ -170,4 +170,39 @@ describe('LocalVllmSupervisor', () => {
     expect(spawn).not.toHaveBeenCalled()
     expect(supervisor.snapshot().status).toBe('stopped')
   })
+
+  it('runs bounded authenticated inference and validates model output before returning findings', async () => {
+    const child = new FakeChild()
+    let completions = 0
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/health')) return new Response(null, { status: 200 })
+      const auth = new Headers(init?.headers).get('authorization')
+      if (url.endsWith('/v1/models') && auth === null) return new Response(null, { status: 401 })
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: LOCAL_VLLM_MODEL_NAME }] })
+      completions += 1
+      const content = completions === 1
+        ? JSON.stringify({ entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com' }], complete: true })
+        : JSON.stringify({ entities: [{ type: 'EMAIL', start: 6, end: 22, text: 'demo@example.com', confidence: 0.99 }], status: 'complete' })
+      const response = Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] })
+      Object.defineProperty(response, 'url', { value: url })
+      return response
+    })
+    const supervisor = new LocalVllmSupervisor({
+      spawn: () => child, fetch: fetchImpl, reservePort: async () => 43_123,
+      token: () => 'test-secret-token', healthIntervalMs: 1,
+    })
+    await supervisor.start(config())
+
+    const findings = await supervisor.detect('Email demo@example.com')
+
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatchObject({ entityType: 'EMAIL', start: 6, end: 22, confidence: 0.99 })
+    expect(supervisor.snapshot().status).toBe('ready')
+    const inference = fetchImpl.mock.calls.find(([input]) => String(input).endsWith('/v1/chat/completions')
+      && JSON.stringify(input).includes('never-match'))
+    expect(inference).toBeUndefined()
+    expect(fetchImpl.mock.calls.every(([input]) => new URL(String(input)).hostname === '127.0.0.1')).toBe(true)
+    await supervisor.stop()
+  })
 })

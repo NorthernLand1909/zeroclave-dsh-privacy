@@ -803,14 +803,8 @@ function RulesView({ controller, snapshot, t }: {
   )
 }
 
-function LocalModelActions({ controller, snapshot, t, state }: { controller: PrivacyController; snapshot: PrivacySnapshot; t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
-  const [modelFiles, setModelFiles] = useState<readonly File[]>([])
+function LocalModelActions({ t, state }: { t: PrivacyDrawerProps['t']; state: PrivacySnapshot['detectorStates'][DetectorMode] }): ReactNode {
   return <div className={`${css.modelActions} ${css.localModelActions}`}>
-    <label><span>{t('model.chooseDirectory')}</span><input type="file" multiple ref={node => { if (node !== null) (node as HTMLInputElement & { webkitdirectory?: boolean }).webkitdirectory = true }} onChange={event => { setModelFiles(Array.from(event.target.files ?? [])) }} /></label>
-    <button className={css.primaryButton} type="button" disabled={modelFiles.length === 0 || state.status === 'loading'} onClick={() => { if (modelFiles.length > 0) void controller.selectLocalModelDirectory(modelFiles).then(() => controller.loadLocalModel()).catch(() => undefined) }}>
-      {state.status === 'loading' ? t('model.loading') : t('model.loadLocalDirectory')}
-    </button>
-    {snapshot.localModel !== undefined ? <small>{`${t('model.localSelected')}: ${snapshot.localModel.modelId} · ${snapshot.localModel.architecture} · ${snapshot.localModel.version} · ${snapshot.localModel.quantization} · ${String(snapshot.localModel.fileSize)} bytes`}</small> : null}
     {state.error !== undefined ? <code>{state.code === undefined ? state.error : `${state.code}: ${state.error}`}</code> : null}
     <small>{t('model.localRuntimeNotice')}</small>
   </div>
@@ -890,7 +884,7 @@ function ModelView({ controller, snapshot, t }: {
           ))}
         </div>
       </section>
-      {snapshot.detectorMode === 'local-model' ? <LocalModelActions controller={controller} snapshot={snapshot} t={t} state={localModelState} /> : null}
+      {snapshot.detectorMode === 'local-model' ? <LocalModelActions t={t} state={localModelState} /> : null}
       {snapshot.detectorMode === 'embedded' ? (
         <div className={css.modelActions}>
           <button

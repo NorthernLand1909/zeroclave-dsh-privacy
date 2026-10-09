@@ -1,7 +1,7 @@
 import type { FindingCandidate } from './detector.ts'
 import type { EntityType, FindingCategory, RiskLevel } from './types.ts'
 
-/** A deliberately small, versioned protocol shared by the Worker and the UI. */
+/** A deliberately small, versioned protocol shared by Host inference and the client. */
 export const MAX_MODEL_ENTITIES = 256
 
 export type ModelOffsetUnit = 'utf16' | 'codepoint'
