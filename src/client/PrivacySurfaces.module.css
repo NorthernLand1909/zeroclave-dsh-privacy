@@ -237,26 +237,31 @@
 .dock {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
-  width: 100%;
+  gap: 12px 16px;
+  width: min(
+    var(--dsh-composer-card-max-width, 952px),
+    calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px))
+  );
   box-sizing: border-box;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, #f0a51b 55%, var(--dsw-alias-border-l2));
-  border-radius: 7px;
-  background: color-mix(in srgb, #f8b52b 7%, var(--dsw-alias-bg-base));
+  margin-inline: auto;
+  padding: 9px 12px;
+  border: 0;
+  border-left: 3px solid color-mix(in srgb, #e4a12b 76%, var(--dsw-alias-border-l2));
+  border-radius: 5px;
+  background: color-mix(in srgb, #f8b52b 5%, var(--dsw-alias-bg-base));
   color: var(--dsw-alias-label-primary);
 }
 
 .dock[data-risk='critical'] {
-  border-color: color-mix(in srgb, #e35454 65%, var(--dsw-alias-border-l2));
+  border-left-color: color-mix(in srgb, #d04a4a 76%, var(--dsw-alias-border-l2));
   background: color-mix(in srgb, #e35454 7%, var(--dsw-alias-bg-base));
 }
 
 .dock[data-status='partial'],
 .dock[data-status='error'] {
-  border-color: color-mix(in srgb, #e35454 65%, var(--dsw-alias-border-l2));
+  border-left-color: color-mix(in srgb, #d04a4a 76%, var(--dsw-alias-border-l2));
   background: color-mix(in srgb, #e35454 7%, var(--dsw-alias-bg-base));
 }
 
@@ -269,8 +274,8 @@
   display: flex;
   align-items: center;
   gap: 9px;
+  flex: 1 1 320px;
   min-width: 0;
-  max-width: 560px;
 }
 
 .dockSummary > svg {
@@ -279,6 +284,8 @@
 }
 
 .dockSummary div {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -288,24 +295,35 @@
 }
 
 .dockSummary strong {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
 }
 
 .dockSummary small {
-  overflow: hidden;
   color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.dockCount {
+  color: #805200;
+  font-weight: 600;
 }
 
 .dockActions,
 .pipelineActions {
   display: flex;
+  align-items: center;
   flex: none;
   gap: 7px;
+}
+
+.dockOpenButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .primaryButton,

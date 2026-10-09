@@ -298,10 +298,9 @@ export function PrivacyDock({ controller, sessionId, t, useInput, inputActions }
       : t(incomplete ? 'dock.partial' : 'dock.title')
   const detail = remotePhase === 'loading' ? t('dock.checkingReminder')
     : remotePhase === 'error' ? t(snapshot.detectorMode === 'embedded' ? 'flow.bertUnavailable' : 'dock.errorReminder')
-      : incomplete ? t('dock.partialReminder')
-        : `${String(count)} ${t('dock.items')} · ${t(
-          snapshot.sendPolicy === 'review-manual' ? 'dock.reviewReminder' : 'dock.reminder',
-        )}`
+      : incomplete ? t('dock.partialReminder') : undefined
+  const reminder = t(snapshot.sendPolicy === 'review-manual' ? 'dock.reviewReminder' : 'dock.reminder')
+  const showFindings = remotePhase === undefined && !incomplete
   return (
     <div className={css.dock} data-risk={result.overallRisk}
       data-status={remotePhase ?? (incomplete ? 'partial' : undefined)}>
@@ -309,12 +308,18 @@ export function PrivacyDock({ controller, sessionId, t, useInput, inputActions }
         <ShieldIcon size={16} />
         <div>
           <strong>{title}</strong>
-          <small>{detail}</small>
+          <small>
+            {showFindings ? <>
+              <span>{t('dock.detected')} </span>
+              <span className={css.dockCount}>{String(count)} {t(count === 1 ? 'dock.item' : 'dock.items')}</span>
+              <span>{` · ${reminder}`}</span>
+            </> : detail}
+          </small>
         </div>
       </div>
       <div className={css.dockActions}>
         <button
-          className={css.secondaryButton}
+          className={`${css.secondaryButton} ${css.dockOpenButton}`}
           type="button"
           onClick={() => {
             controller.setTab('audit')
@@ -322,6 +327,7 @@ export function PrivacyDock({ controller, sessionId, t, useInput, inputActions }
           }}
         >
           {t('dock.open')}
+          <LucideIcon icon={ArrowRight} size={14} />
         </button>
       </div>
     </div>

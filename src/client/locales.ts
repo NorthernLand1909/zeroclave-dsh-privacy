@@ -6,7 +6,7 @@ export type PrivacyKey =
   | RuleKey
   | 'brand' | 'active' | 'paused' | 'enable' | 'disable' | 'headerAction' | 'footerEnabled' | 'close' | 'sessionFallback'
   | 'tab.audit' | 'tab.rules' | 'tab.model'
-  | 'dock.title' | 'dock.items' | 'dock.open' | 'dock.reminder' | 'dock.reviewReminder'
+  | 'dock.title' | 'dock.detected' | 'dock.item' | 'dock.items' | 'dock.open' | 'dock.reminder' | 'dock.reviewReminder'
   | 'dock.partial' | 'dock.partialReminder' | 'dock.checking' | 'dock.checkingReminder'
   | 'dock.error' | 'dock.errorReminder'
   | 'risk.none' | 'risk.medium' | 'risk.high' | 'risk.critical'
@@ -101,13 +101,15 @@ export const zh: Record<PrivacyKey, string> = {
   'tab.audit': '隐私检测',
   'tab.rules': '正则规则',
   'tab.model': '检测设置',
-  'dock.title': '发现敏感内容',
-  'dock.items': '项风险',
-  'dock.open': '查看详情',
-  'dock.reminder': '发送时自动脱敏',
-  'dock.reviewReminder': '发送前手动确认',
+  'dock.title': '发送前检查',
+  'dock.detected': '检测到',
+  'dock.item': '项敏感内容',
+  'dock.items': '项敏感内容',
+  'dock.open': '查看并处理',
+  'dock.reminder': '检测成功后自动脱敏发送',
+  'dock.reviewReminder': '当前需要手动确认',
   'dock.partial': '检测结果不完整',
-  'dock.partialReminder': '不能据此判定其余原文安全，请查看详情',
+  'dock.partialReminder': '不能据此判定其余原文安全，请查看并处理',
   'dock.checking': '正在进行 ZeroClave 检测',
   'dock.checkingReminder': '检测完成前不会发送当前内容',
   'dock.error': 'ZeroClave 检测失败',
@@ -321,13 +323,15 @@ export const en: Record<PrivacyKey, string> = {
   'tab.audit': 'Privacy scan',
   'tab.rules': 'Rules',
   'tab.model': 'Detection settings',
-  'dock.title': 'Sensitive content found',
-  'dock.items': 'risk items',
-  'dock.open': 'View details',
-  'dock.reminder': 'Redacted automatically on send',
-  'dock.reviewReminder': 'Critical findings reviewed before send',
+  'dock.title': 'Pre-send check',
+  'dock.detected': 'Detected',
+  'dock.item': 'sensitive item',
+  'dock.items': 'sensitive items',
+  'dock.open': 'Review and edit',
+  'dock.reminder': 'Automatically redact after a successful scan',
+  'dock.reviewReminder': 'Manual confirmation required',
   'dock.partial': 'Detection is incomplete',
-  'dock.partialReminder': 'Unmarked text cannot be considered safe; open the details',
+  'dock.partialReminder': 'Unmarked text cannot be considered safe; review the findings before sending',
   'dock.checking': 'ZeroClave detection in progress',
   'dock.checkingReminder': 'This content will not be sent until detection completes',
   'dock.error': 'ZeroClave detection failed',
