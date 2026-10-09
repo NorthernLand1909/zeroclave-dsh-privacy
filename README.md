@@ -1,3 +1,5 @@
+<p align="center"><a href="README.en.md">English</a> | 简体中文</p>
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/ZeroClave/zeroclave-dsh-privacy/main/docs/assets/readme-hero.svg" alt="ZeroClave：识别敏感内容，查看与调整，确认后发送" width="100%">
 </p>
