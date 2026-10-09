@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml"><img src="https://github.com/ZeroClave/zeroclave-dsh-privacy/actions/workflows/ci.yml/badge.svg?branch=main" alt="Build and test"></a>
-  <a href="https://github.com/ZeroClave/zeroclave-dsh-privacy/blob/main/package.json"><img src="https://img.shields.io/badge/version-alpha.27-0ca66d" alt="Version alpha.27"></a>
+  <a href="https://github.com/ZeroClave/zeroclave-dsh-privacy/blob/main/package.json"><img src="https://img.shields.io/badge/version-alpha.28-0ca66d" alt="Version alpha.28"></a>
   <a href="https://github.com/ZeroClave/zeroclave-dsh-privacy/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-64748b" alt="Apache-2.0 License"></a>
 </p>
 

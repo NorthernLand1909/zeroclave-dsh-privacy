@@ -26,6 +26,7 @@ function allowedEntry(name) {
   const exact = new Set([
     'package/LICENSE',
     'package/README.md',
+    'package/README.en.md',
     'package/cordis.patch.yml',
     'package/plugin.json',
     'package/lib/client.js',
