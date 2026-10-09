@@ -40,8 +40,8 @@ function config(): ValidatedLocalVllmConfig {
 
 function warmupResponse(valid = true): Response {
   const content = valid
-    ? JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [{ type: 'EMAIL', start: 8, end: 24, text: 'demo@example.com', confidence: 1 }] })
-    : JSON.stringify({ status: 'complete', offsetUnit: 'utf16', entities: [] })
+    ? JSON.stringify([{ pii: 'demo@example.com', type: 'email', confidence: '0.99' }])
+    : JSON.stringify([])
   return Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] })
 }
 

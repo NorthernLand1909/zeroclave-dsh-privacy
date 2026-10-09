@@ -88,9 +88,11 @@ function configSummary(config: ValidatedLocalVllmConfig | undefined): unknown {
   if (config === undefined) return { configured: false }
   return {
     configured: true,
-    condaExecutable: basename(config.condaExecutable),
-    condaEnvironment: { kind: config.condaEnvironment.kind, value: basename(config.condaEnvironment.value) },
-    modelDirectory: basename(config.modelDirectory),
+    // This authenticated config endpoint is used only to repopulate the user's
+    // own settings form. Runtime/status endpoints still expose only basenames.
+    condaExecutable: config.condaExecutable,
+    condaEnvironment: { kind: config.condaEnvironment.kind, value: config.condaEnvironment.value },
+    modelDirectory: config.modelDirectory,
     gpuMemoryUtilization: config.gpuMemoryUtilization,
     maxModelLength: config.maxModelLength,
     dtype: config.dtype,

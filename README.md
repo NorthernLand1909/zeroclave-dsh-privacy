@@ -198,6 +198,8 @@ pnpm --filter '@zeroclave/dsh-privacy' run bundle
 pnpm --filter '@zeroclave/dsh-privacy' test
 ```
 
+阶段 8/9 的本机 vLLM 环境和 smoke 结果记录在 [`docs/local-vllm-runtime.md`](docs/local-vllm-runtime.md)。发布前还必须在目标 Windows 11 + WSL2 + NVIDIA 机器完成 20 次启停无残留测试；单次 smoke 结果不替代该验收。
+
 生成 npm/DSH 命令行安装包：
 
 ```bash

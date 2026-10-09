@@ -46,20 +46,20 @@ describe('local vLLM same-origin API', () => {
     expect(text).not.toContain('port')
   })
 
-  it('returns only a redacted configuration summary and never exposes paths or capabilities', async () => {
+  it('returns the authenticated user configuration so the settings form can be restored', async () => {
     const supervisor = fakeSupervisor()
     const api = new LocalVllmHostApi(supervisor as unknown as LocalVllmSupervisor, config())
     const response = await api.fetch(LOCAL_VLLM_API_PATHS.config, new Request('http://localhost/api', { method: 'GET' }))
     const text = await response.text()
 
     expect(response.status).toBe(200)
-    expect(text).not.toContain('/home/demo')
-    expect(text).not.toContain('/mnt/c')
+    expect(text).toContain('/home/demo')
+    expect(text).toContain('/mnt/c')
     expect(text).not.toContain('token')
     expect(JSON.parse(text)).toMatchObject({
       configured: true,
-      condaExecutable: 'conda',
-      modelDirectory: 'Qwen3.5-0.8B-pii-v2-merged',
+      condaExecutable: '/home/demo/anaconda3/bin/conda',
+      modelDirectory: '/mnt/c/Users/demo/private/Qwen3.5-0.8B-pii-v2-merged',
     })
   })
 

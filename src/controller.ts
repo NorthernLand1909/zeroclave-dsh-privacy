@@ -424,17 +424,19 @@ export class PrivacyController {
   async configureLocalVllm(config: LocalVllmConfigInput): Promise<void> {
     if (!(this.localModel instanceof HostLocalModelDetector)) return
     this.setDetectorState('local-model', { status: 'loading' })
+    const stopPolling = this.beginLocalVllmPolling()
     try { await this.localModel.configure(config, this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
       this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
-    }
+    } finally { stopPolling() }
   }
 
   async startLocalVllm(): Promise<void> {
     if (!(this.localModel instanceof HostLocalModelDetector)) return
     this.setDetectorState('local-model', { status: 'loading' })
+    const stopPolling = this.beginLocalVllmPolling()
     try { await this.localModel.start(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
       this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
-    }
+    } finally { stopPolling() }
   }
 
   async stopLocalVllm(): Promise<void> {
@@ -446,9 +448,10 @@ export class PrivacyController {
   async restartLocalVllm(): Promise<void> {
     if (!(this.localModel instanceof HostLocalModelDetector)) return
     this.cancelActiveOperations(); this.setDetectorState('local-model', { status: 'loading' })
+    const stopPolling = this.beginLocalVllmPolling()
     try { await this.localModel.restart(this.lifetime.signal); await this.refreshLocalVllm() } catch (error) {
       this.setLocalModelError(error); await this.refreshLocalVllmDiagnostics()
-    }
+    } finally { stopPolling() }
   }
 
   async testLocalVllm(): Promise<void> {
@@ -465,6 +468,11 @@ export class PrivacyController {
     } catch {
       // Diagnostics are best-effort and must not replace the actionable startup error.
     }
+  }
+
+  private beginLocalVllmPolling(): () => void {
+    const timer = setInterval(() => { void this.refreshLocalVllm() }, 500)
+    return () => { clearInterval(timer) }
   }
 
   private clearLocalModelSnapshot(): void {

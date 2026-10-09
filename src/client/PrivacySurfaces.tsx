@@ -814,7 +814,26 @@ function LocalModelActions({ controller, snapshot, t, state }: { controller: Pri
   const [dtype, setDtype] = useState<'auto' | 'bfloat16' | 'float16'>('auto')
   const [tensorParallel, setTensorParallel] = useState(1)
   const [autoStart, setAutoStart] = useState(true)
+  useEffect(() => {
+    if (saved?.configured !== true) return
+    if (saved.condaExecutable !== undefined) setConda(saved.condaExecutable)
+    if (saved.condaEnvironment !== undefined) {
+      setEnvironmentKind(saved.condaEnvironment.kind)
+      setEnvironment(saved.condaEnvironment.value)
+    }
+    if (saved.modelDirectory !== undefined) setModel(saved.modelDirectory)
+    if (saved.gpuMemoryUtilization !== undefined) setGpu(saved.gpuMemoryUtilization)
+    if (saved.maxModelLength !== undefined) setMaxLength(saved.maxModelLength)
+    if (saved.dtype !== undefined) setDtype(saved.dtype)
+    if (saved.tensorParallelSize !== undefined) setTensorParallel(saved.tensorParallelSize)
+    if (saved.autoStart !== undefined) setAutoStart(saved.autoStart)
+  }, [saved])
   const busy = state.status === 'loading' || state.inferenceStatus === 'running'
+  const serviceStatus = snapshot.localVllmStatus?.status
+  const serviceLabel = serviceStatus === undefined ? t('model.stage.unconfigured')
+    : serviceStatus === 'health_checking' ? t('model.stage.health')
+      : serviceStatus === 'startup_error' || serviceStatus === 'warmup_error' || serviceStatus === 'crashed' ? t('model.stage.error')
+        : t(`model.stage.${serviceStatus}` as PrivacyKey)
   const apply = (): void => {
     void controller.configureLocalVllm({
       condaExecutable: conda, condaEnvironment: { kind: environmentKind, value: environment },
@@ -842,7 +861,7 @@ function LocalModelActions({ controller, snapshot, t, state }: { controller: Pri
       <button className={css.secondaryButton} type="button" disabled={busy} onClick={() => { void controller.refreshLocalVllm() }}>{t('model.refresh')}</button>
       <button className={css.secondaryButton} type="button" disabled={busy} onClick={() => { void controller.refreshLocalVllmDiagnostics() }}>{t('model.diagnostics')}</button>
     </div>
-    <small>{`${t('model.serviceStatus')}: ${snapshot.localVllmStatus?.status ?? 'unconfigured'} · ${snapshot.localVllmStatus?.modelDirectory ?? saved?.modelDirectory ?? '-'}`}</small>
+    <small>{`${t('model.serviceStatus')}: ${serviceLabel} · ${snapshot.localVllmStatus?.modelDirectory ?? saved?.modelDirectory ?? '-'}`}</small>
     {state.error !== undefined ? <code>{state.code === undefined ? state.error : `${state.code}: ${state.error}`}</code> : null}
     {snapshot.localVllmDiagnostics === undefined ? null : <details className={css.localModelDiagnostics} open={state.status === 'error'}>
       <summary>{t('model.diagnosticTitle')}</summary>

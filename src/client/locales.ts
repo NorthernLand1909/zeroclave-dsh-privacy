@@ -46,6 +46,7 @@ export type PrivacyKey =
   | 'model.condaExecutable' | 'model.condaEnvironment' | 'model.environmentKind' | 'model.environmentName' | 'model.environmentPrefix'
   | 'model.modelDirectory' | 'model.gpuMemory' | 'model.maxLength' | 'model.dtype' | 'model.tensorParallel' | 'model.autoStart'
   | 'model.applyStart' | 'model.stop' | 'model.restart' | 'model.refresh' | 'model.diagnostics' | 'model.diagnosticTitle' | 'model.noDiagnostics' | 'model.serviceStatus' | 'model.savedSummary'
+  | 'model.stage.unconfigured' | 'model.stage.stopped' | 'model.stage.starting' | 'model.stage.health' | 'model.stage.warming' | 'model.stage.ready' | 'model.stage.running' | 'model.stage.stopping' | 'model.stage.error'
   | 'telemetry.title' | 'telemetry.summary' | 'telemetry.consent' | 'telemetry.on' | 'telemetry.off'
   | 'telemetry.checking' | 'telemetry.unavailable' | 'telemetry.gpc' | 'telemetry.detail' | 'telemetry.network'
   | 'telemetry.detailsLink' | 'telemetry.detailParagraph1' | 'telemetry.detailParagraph2' | 'telemetry.detailParagraph3'
@@ -217,6 +218,9 @@ export const zh: Record<PrivacyKey, string> = {
   'model.autoStart': '保存后自动启动', 'model.applyStart': '应用并启动', 'model.stop': '停止', 'model.restart': '重启',
   'model.refresh': '刷新状态', 'model.serviceStatus': '服务状态', 'model.savedSummary': 'Host 已保存摘要',
   'model.diagnostics': '查看诊断', 'model.diagnosticTitle': '本地模型诊断', 'model.noDiagnostics': '暂无诊断信息',
+  'model.stage.unconfigured': '未配置', 'model.stage.stopped': '已停止', 'model.stage.starting': '正在启动 vLLM',
+  'model.stage.health': '正在健康检查', 'model.stage.warming': '正在预热模型', 'model.stage.ready': '模型已就绪',
+  'model.stage.running': '正在推理', 'model.stage.stopping': '正在停止', 'model.stage.error': '启动失败',
   'telemetry.title': '共享匿名使用统计',
   'telemetry.summary': '帮助我们了解隐私检测功能的使用情况。',
   'telemetry.consent': '共享匿名使用统计',
@@ -430,6 +434,9 @@ export const en: Record<PrivacyKey, string> = {
   'model.autoStart': 'Auto-start after save', 'model.applyStart': 'Apply and start', 'model.stop': 'Stop', 'model.restart': 'Restart',
   'model.refresh': 'Refresh status', 'model.serviceStatus': 'Service status', 'model.savedSummary': 'Saved Host summary',
   'model.diagnostics': 'View diagnostics', 'model.diagnosticTitle': 'Local model diagnostics', 'model.noDiagnostics': 'No diagnostics available',
+  'model.stage.unconfigured': 'Not configured', 'model.stage.stopped': 'Stopped', 'model.stage.starting': 'Starting vLLM',
+  'model.stage.health': 'Running health checks', 'model.stage.warming': 'Warming up model', 'model.stage.ready': 'Model ready',
+  'model.stage.running': 'Running inference', 'model.stage.stopping': 'Stopping', 'model.stage.error': 'Startup failed',
   'telemetry.title': 'Share anonymous usage statistics',
   'telemetry.summary': 'Help us understand how privacy detection is used.',
   'telemetry.consent': 'Share anonymous usage metrics',
